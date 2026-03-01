@@ -1,6 +1,9 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
-extension Color {
+public extension Color {
     init(_ paint: Paint) {
         self.init(red: paint.R, green: paint.G, blue: paint.B, opacity: paint.A)
     }
@@ -15,13 +18,14 @@ struct BackgroundModifier: ViewModifier {
     }
 }
 
-extension View {
+public extension View {
     func background(_ paint: Paint) -> some View {
         modifier(BackgroundModifier(paint: paint))
     }
 }
 
-extension View {
+#if canImport(UIKit)
+public extension View {
     func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
         clipShape(RoundedCorner(radius: radius, corners: corners))
     }
@@ -36,3 +40,4 @@ struct RoundedCorner: Shape {
         return Path(path.cgPath)
     }
 }
+#endif

@@ -1,19 +1,19 @@
 import SwiftUI
 
-enum GlassButtonType {
+public enum GlassButtonType {
     case clear
     case colored
 }
 
-struct GlassButton<Content: View>: View {
-    var tint: Color
-    var shape: ButtonBorderShape
-    var size: ControlSize
-    var style: GlassButtonType
-    var action: () -> Void
-    var label: () -> Content
+public struct GlassButton<Content: View>: View {
+    public var tint: Color
+    public var shape: ButtonBorderShape
+    public var size: ControlSize
+    public var style: GlassButtonType
+    public var action: () -> Void
+    public var label: () -> Content
     
-    init(tint: Color = .primary, shape: ButtonBorderShape = .capsule, size: ControlSize = .regular, style: GlassButtonType = .clear, action: @escaping () -> Void, label: @escaping () -> Content) {
+    public init(tint: Color = .primary, shape: ButtonBorderShape = .capsule, size: ControlSize = .regular, style: GlassButtonType = .clear, action: @escaping () -> Void, label: @escaping () -> Content) {
         self.tint = tint
         self.shape = shape
         self.size = size
@@ -22,9 +22,9 @@ struct GlassButton<Content: View>: View {
         self.label = label
     }
     
-    var body: some View {
+    public var body: some View {
         Group {
-            if #available(iOS 26.0, *) {
+            if #available(iOS 26.0, macOS 26.0, *) {
                 if style == .clear {
                     Button {
                         impact(.soft)

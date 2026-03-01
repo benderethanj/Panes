@@ -1,29 +1,29 @@
 import SwiftUI
 
-struct Paint: Identifiable, Hashable, Codable, Equatable {
-    var id: UUID = UUID()
+public struct Paint: Identifiable, Hashable, Codable, Equatable {
+    public var id: UUID = UUID()
     
-    var key: String {
+    public var key: String {
         return "( red: \(R * 100)%, green: \(G * 100)%, blue: \(B * 100)% )"
     }
     
-    var R: CGFloat
-    var G: CGFloat
-    var B: CGFloat
+    public var R: CGFloat
+    public var G: CGFloat
+    public var B: CGFloat
     
-    var C: CGFloat
-    var M: CGFloat
-    var Y: CGFloat
+    public var C: CGFloat
+    public var M: CGFloat
+    public var Y: CGFloat
     
-    var hue: CGFloat
-    var saturation: CGFloat
-    var luminosity: CGFloat
+    public var hue: CGFloat
+    public var saturation: CGFloat
+    public var luminosity: CGFloat
     
-    var hex: String
+    public var hex: String
     
-    var L: CGFloat
-    var a: CGFloat
-    var b: CGFloat
+    public var L: CGFloat
+    public var a: CGFloat
+    public var b: CGFloat
     
-    var A: CGFloat
+    public var A: CGFloat
 }

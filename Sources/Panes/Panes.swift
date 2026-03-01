@@ -44,29 +44,29 @@ public enum PaneExpansionAxis: String, Hashable {
 }
 
 public struct PaneConfig {
-    var detents: [PaneDetent] = [.large]
-    var largestUndimmedDetent: PaneDetent? = nil
-    var showsDragIndicator: Bool
+    public var detents: [PaneDetent] = [.large]
+    public var largestUndimmedDetent: PaneDetent? = nil
+    public var showsDragIndicator: Bool
 
-    var allowsBackgroundInteraction: Bool
-    var tapOutsideToDismiss: Bool
-    var allowsSwipeToDismiss: Bool
+    public var allowsBackgroundInteraction: Bool
+    public var tapOutsideToDismiss: Bool
+    public var allowsSwipeToDismiss: Bool
 
-    var cornerRadius: CGFloat
-    var topInset: CGFloat
-    var horizontalPadding: CGFloat
-    var dimmingOpacity: CGFloat
-    var crossAxisSize: PaneCrossAxisSize
-    var anchor: Alignment
-    var expansionAxis: PaneExpansionAxis
-    var collapsedScrollAnchorTag: AnyHashable?
-    var collapsedScrollAnchor: UnitPoint
-    var keepsCollapsedScrollAnchorPinned: Bool
-    var dragIndicatorContentInset: CGFloat
-    var dragIndicatorFadeLength: CGFloat
+    public var cornerRadius: CGFloat
+    public var topInset: CGFloat
+    public var horizontalPadding: CGFloat
+    public var dimmingOpacity: CGFloat
+    public var crossAxisSize: PaneCrossAxisSize
+    public var anchor: Alignment
+    public var expansionAxis: PaneExpansionAxis
+    public var collapsedScrollAnchorTag: AnyHashable?
+    public var collapsedScrollAnchor: UnitPoint
+    public var keepsCollapsedScrollAnchorPinned: Bool
+    public var dragIndicatorContentInset: CGFloat
+    public var dragIndicatorFadeLength: CGFloat
 
-    var dismissThresholdMultiplier: CGFloat
-    var animation: Animation
+    public var dismissThresholdMultiplier: CGFloat
+    public var animation: Animation
     
     public init(
         detents: [PaneDetent] = [.large],
@@ -114,64 +114,71 @@ public struct PaneConfig {
 }
 
 public final class PaneScrollState: ObservableObject {
-    @Published var scrollOffset: CGFloat = 0
-    @Published var maxScrollOffset: CGFloat = 0
-    @Published var bottomEdgeDistance: CGFloat = .greatestFiniteMagnitude
-    @Published var contentLength: CGFloat = 0
-    @Published var viewportLength: CGFloat = 0
-    @Published var scrollDisabled: Bool = true
+    @Published public internal(set) var scrollOffset: CGFloat = 0
+    @Published public internal(set) var maxScrollOffset: CGFloat = 0
+    @Published public internal(set) var bottomEdgeDistance: CGFloat = .greatestFiniteMagnitude
+    @Published public internal(set) var contentLength: CGFloat = 0
+    @Published public internal(set) var viewportLength: CGFloat = 0
+    @Published public internal(set) var scrollDisabled: Bool = true
+
+    public init() {}
 }
 
 public struct PaneDetentSnapshot: Hashable {
-    let detent: PaneDetent
-    let height: CGFloat
+    public let detent: PaneDetent
+    public let height: CGFloat
+
+    public init(detent: PaneDetent, height: CGFloat) {
+        self.detent = detent
+        self.height = height
+    }
 }
 
 public struct PaneContext {
-    let scrollState: PaneScrollState
-    let isPresented: Binding<Bool>
-    let selectedDetent: Binding<PaneDetent>
+    public let scrollState: PaneScrollState
+    public let isPresented: Binding<Bool>
+    public let selectedDetent: Binding<PaneDetent>
 
-    let options: PaneConfig
-    let expansionAxis: PaneExpansionAxis
-    let anchor: Alignment
+    public let options: PaneConfig
+    public let expansionAxis: PaneExpansionAxis
+    public let anchor: Alignment
 
-    let detents: [PaneDetentSnapshot]
-    let minDetentHeight: CGFloat
-    let maxDetentHeight: CGFloat
-    let selectedDetentHeight: CGFloat
-    let interactiveHeight: CGFloat
-    let clampedInteractiveHeight: CGFloat
-    let expansionProgress: CGFloat
+    public let detents: [PaneDetentSnapshot]
+    public let minDetentHeight: CGFloat
+    public let maxDetentHeight: CGFloat
+    public let selectedDetentHeight: CGFloat
+    public let interactiveHeight: CGFloat
+    public let clampedInteractiveHeight: CGFloat
+    public let expansionProgress: CGFloat
 
-    let dragTranslation: CGFloat
-    let isDraggingPane: Bool
+    public let dragTranslation: CGFloat
+    public let isDraggingPane: Bool
 
-    let safeAreaInsets: EdgeInsets
-    let layoutBounds: CGRect
-    let frame: CGRect
-    let crossAxisLength: CGFloat
+    public let safeAreaInsets: EdgeInsets
+    public let layoutBounds: CGRect
+    public let frame: CGRect
+    public let crossAxisLength: CGFloat
 
-    let backdropOpacity: CGFloat
-    let isDimmed: Bool
-    let blocksBackgroundInteraction: Bool
-    let isSelectedDetentFullyExpanded: Bool
+    public let backdropOpacity: CGFloat
+    public let isDimmed: Bool
+    public let blocksBackgroundInteraction: Bool
+    public let isSelectedDetentFullyExpanded: Bool
 
     fileprivate let dismissAction: () -> Void
 
-    var scrollOffset: CGFloat { scrollState.scrollOffset }
-    var isScrollDisabled: Bool { scrollState.scrollDisabled }
-    var isAtMinDetent: Bool { abs(clampedInteractiveHeight - minDetentHeight) < 1 }
-    var isAtMaxDetent: Bool { abs(clampedInteractiveHeight - maxDetentHeight) < 1 }
-    var selectedDetentIndex: Int? {
+    public var scrollOffset: CGFloat { scrollState.scrollOffset }
+    public var isScrollDisabled: Bool { scrollState.scrollDisabled }
+    public var isAtMinDetent: Bool { abs(clampedInteractiveHeight - minDetentHeight) < 1 }
+    public var isAtMaxDetent: Bool { abs(clampedInteractiveHeight - maxDetentHeight) < 1 }
+    public var selectedDetentIndex: Int? {
         detents.firstIndex(where: { $0.detent == selectedDetent.wrappedValue })
     }
 
-    var selectedDetentLabel: String {
+    public var selectedDetentLabel: String {
         Self.label(for: selectedDetent.wrappedValue)
     }
 
-    func dismiss() {
+    public func dismiss() {
         dismissAction()
     }
 
@@ -190,7 +197,7 @@ public struct PaneContext {
 }
 
 private struct PaneScrollOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = .greatestFiniteMagnitude
+    static let defaultValue: CGFloat = .greatestFiniteMagnitude
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
@@ -198,7 +205,7 @@ private struct PaneScrollOffsetKey: PreferenceKey {
 }
 
 private struct PaneScrollContentLengthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+    static let defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
@@ -206,7 +213,7 @@ private struct PaneScrollContentLengthKey: PreferenceKey {
 }
 
 private struct PaneScrollViewportLengthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+    static let defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
@@ -214,7 +221,7 @@ private struct PaneScrollViewportLengthKey: PreferenceKey {
 }
 
 private struct PaneScrollViewportMinYKey: PreferenceKey {
-    static var defaultValue: CGFloat = .greatestFiniteMagnitude
+    static let defaultValue: CGFloat = .greatestFiniteMagnitude
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
@@ -222,7 +229,7 @@ private struct PaneScrollViewportMinYKey: PreferenceKey {
 }
 
 private struct PaneScrollViewportMaxYKey: PreferenceKey {
-    static var defaultValue: CGFloat = .greatestFiniteMagnitude
+    static let defaultValue: CGFloat = .greatestFiniteMagnitude
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
@@ -230,7 +237,7 @@ private struct PaneScrollViewportMaxYKey: PreferenceKey {
 }
 
 private struct PaneScrollBottomMarkerMaxYKey: PreferenceKey {
-    static var defaultValue: CGFloat = .greatestFiniteMagnitude
+    static let defaultValue: CGFloat = .greatestFiniteMagnitude
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
@@ -420,7 +427,7 @@ public struct PaneScrollView<Content: View>: View {
     @State private var latestViewportGlobalMaxY: CGFloat = .greatestFiniteMagnitude
     @State private var lastAppliedInteractiveAnchorProgress: CGFloat = 0
 
-    init(
+    public init(
         state: PaneScrollState,
         collapsedScrollAnchorTag: AnyHashable? = nil,
         shouldPinCollapsedScrollAnchor: Bool = false,
@@ -883,7 +890,7 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
     private let dragDismissCompletionDelay: TimeInterval = 0.42
     private let dragDismissAnimationSpeed: Double = 0.8
 
-    func body(content: Content) -> some View {
+    public func body(content: Content) -> some View {
         content
             .overlay {
                 GeometryReader { proxy in
@@ -2107,7 +2114,7 @@ public enum PaneAnchorPreset: String, CaseIterable, Identifiable {
 
     public var id: String { rawValue }
 
-    var title: String {
+    public var title: String {
         switch self {
         case .topLeading: "Top Leading"
         case .top: "Top"
@@ -2121,7 +2128,7 @@ public enum PaneAnchorPreset: String, CaseIterable, Identifiable {
         }
     }
 
-    var alignment: Alignment {
+    public var alignment: Alignment {
         switch self {
         case .topLeading: .topLeading
         case .top: .top
@@ -2139,7 +2146,7 @@ public enum PaneAnchorPreset: String, CaseIterable, Identifiable {
 public extension View {
     func glassEffectIfAvailable(cornerRadius: CGFloat) -> some View {
         Group {
-            if #available(iOS 26.0, *) {
+            if #available(iOS 26.0, macOS 26.0, *) {
                 self.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
             } else {
                 self

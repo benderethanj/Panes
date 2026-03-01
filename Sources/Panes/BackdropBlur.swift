@@ -1,7 +1,10 @@
 import SwiftUI
 
+#if canImport(UIKit)
+import UIKit
+
 /// A View in which content reflects all behind it
-struct BackdropView: UIViewRepresentable {
+private struct BackdropView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UIVisualEffectView {
         let view = UIVisualEffectView()
@@ -17,15 +20,27 @@ struct BackdropView: UIViewRepresentable {
     func updateUIView(_ uiView: UIVisualEffectView, context: Context) { }
     
 }
+#endif
 
 /// A transparent View that blurs its background
-struct BackdropBlurView: View {
+public struct BackdropBlurView: View {
     
-    let radius: CGFloat
+    public let radius: CGFloat
+
+    public init(radius: CGFloat) {
+        self.radius = radius
+    }
     
     @ViewBuilder
-    var body: some View {
+    public var body: some View {
+        #if canImport(UIKit)
         BackdropView().blur(radius: radius)
+        #else
+        Rectangle()
+            .fill(.clear)
+            .background(.ultraThinMaterial)
+            .blur(radius: radius)
+        #endif
     }
     
 }

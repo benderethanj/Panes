@@ -1,6 +1,6 @@
 import SwiftUI
 
-extension Paint {
+public extension Paint {
     func color() -> Color {
         return Color(red: R, green: G, blue: B, opacity: A)
     }

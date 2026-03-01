@@ -1,6 +1,6 @@
 import SwiftUI
 
-func rgbToHex(r: CGFloat, g: CGFloat, b: CGFloat) -> String {
+public func rgbToHex(r: CGFloat, g: CGFloat, b: CGFloat) -> String {
     let x1 = abs(Int(floor(r * 255 / 16)))
     let x2 = abs(Int(floor(g * 255 / 16)))
     let x3 = abs(Int(floor(b * 255 / 16)))
@@ -12,7 +12,7 @@ func rgbToHex(r: CGFloat, g: CGFloat, b: CGFloat) -> String {
     return hexadecimal(x1) + hexadecimal(y1) + hexadecimal(x2) + hexadecimal(y2) + hexadecimal(x3) + hexadecimal(y3)
 }
 
-func hexToRGB(_ hex: String) -> [CGFloat] {
+public func hexToRGB(_ hex: String) -> [CGFloat] {
     var values: [Int] = []
     for char in hex {
         values.append(decimal(String(char)))
@@ -28,7 +28,7 @@ func hexToRGB(_ hex: String) -> [CGFloat] {
     }
 }
 
-func hexadecimal(_ decimal: Int) -> String {
+public func hexadecimal(_ decimal: Int) -> String {
     if decimal < 10 {
         return "\(decimal)"
     } else {
@@ -51,7 +51,7 @@ func hexadecimal(_ decimal: Int) -> String {
     }
 }
 
-func decimal(_ hexadecimal: String) -> Int {
+public func decimal(_ hexadecimal: String) -> Int {
     switch hexadecimal {
     case "0":
         return 0
@@ -90,7 +90,7 @@ func decimal(_ hexadecimal: String) -> Int {
     }
 }
 
-func rgbToHue(R: CGFloat, G: CGFloat, B: CGFloat) -> CGFloat {
+public func rgbToHue(R: CGFloat, G: CGFloat, B: CGFloat) -> CGFloat {
     let max = max(R, G, B)
     let min = min(R, G, B)
     let c = max - min
@@ -121,13 +121,13 @@ func rgbToHue(R: CGFloat, G: CGFloat, B: CGFloat) -> CGFloat {
     return value * 60;
 }
 
-func rgbToLuminosity(R: CGFloat, G: CGFloat, B: CGFloat) -> CGFloat {
+public func rgbToLuminosity(R: CGFloat, G: CGFloat, B: CGFloat) -> CGFloat {
     let max = max(R, G, B)
     let min = min(R, G, B)
     return (max + min) / 2
 }
 
-func rgbToSaturation(R: CGFloat, G: CGFloat, B: CGFloat) -> CGFloat {
+public func rgbToSaturation(R: CGFloat, G: CGFloat, B: CGFloat) -> CGFloat {
     let luminosity = rgbToLuminosity(R: R, G: G, B: B)
     if luminosity == 1 {
         return 0
@@ -139,14 +139,14 @@ func rgbToSaturation(R: CGFloat, G: CGFloat, B: CGFloat) -> CGFloat {
 }
 
 
-func xyz(r: CGFloat, g: CGFloat, b: CGFloat) -> [CGFloat] {
+public func xyz(r: CGFloat, g: CGFloat, b: CGFloat) -> [CGFloat] {
     let x = 0.4124564 * r + 0.3575761 * g + 0.1804375 * b
     let y = 0.2126729 * r + 0.7151522 * g + 0.0721750 * b
     let z = 0.0193339 * r + 0.1191920 * g + 0.9503041 * b
     return [x, y, z]
 }
 
-func xyzlabFactor(_ value: CGFloat) -> CGFloat {
+public func xyzlabFactor(_ value: CGFloat) -> CGFloat {
     if value > pow(6 / 29, 3) {
         return pow(value, 1 / 3)
     } else {
@@ -154,18 +154,18 @@ func xyzlabFactor(_ value: CGFloat) -> CGFloat {
     }
 }
 
-func rgbToLightness(R: CGFloat, G: CGFloat, B: CGFloat) -> CGFloat {
+public func rgbToLightness(R: CGFloat, G: CGFloat, B: CGFloat) -> CGFloat {
     return 116 * xyzlabFactor(xyz(r: R, g: G, b: B)[1] / 1.0000001) - 16
 }
 
-func rgbToA(R: CGFloat, G: CGFloat, B: CGFloat) -> CGFloat {
+public func rgbToA(R: CGFloat, G: CGFloat, B: CGFloat) -> CGFloat {
     return 500 * (xyzlabFactor(xyz(r: R, g: G, b: B)[0] / 0.95047) - xyzlabFactor(xyz(r: R, g: G, b: B)[1] / 1.0000001))
 }
-func rgbToB(R: CGFloat, G: CGFloat, B: CGFloat) -> CGFloat {
+public func rgbToB(R: CGFloat, G: CGFloat, B: CGFloat) -> CGFloat {
     return 200 * (xyzlabFactor(xyz(r: R, g: G, b: B)[1] / 1.0000001) - xyzlabFactor(xyz(r: R, g: G, b: B)[2] / 1.08883))
 }
 
-func HSLToRGB(H: CGFloat, S: CGFloat, L: CGFloat) -> [CGFloat] {
+public func HSLToRGB(H: CGFloat, S: CGFloat, L: CGFloat) -> [CGFloat] {
     let C = (1 - abs(2 * L - 1)) * S
     let X = C * (1 - abs((H / 60).truncatingRemainder(dividingBy: 2) - 1))
     let m = L - C / 2

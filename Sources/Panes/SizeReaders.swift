@@ -4,7 +4,7 @@ public struct SizeReader<Content: View>: View {
     @Binding var size: CGSize
     let content: () -> Content
     
-    init(_ size: Binding<CGSize>, @ViewBuilder content: @escaping () -> Content) {
+    public init(_ size: Binding<CGSize>, @ViewBuilder content: @escaping () -> Content) {
         _size = size
         self.content = content
     }
@@ -32,7 +32,7 @@ public struct FrameReader<Content: View>: View {
     let space: CoordinateSpaceProtocol
     let content: () -> Content
     
-    init(_ frame: Binding<CGRect>, in space: CoordinateSpaceProtocol = .global, @ViewBuilder content: @escaping () -> Content) {
+    public init(_ frame: Binding<CGRect>, in space: CoordinateSpaceProtocol = .global, @ViewBuilder content: @escaping () -> Content) {
         _frame = frame
         self.space = space
         self.content = content

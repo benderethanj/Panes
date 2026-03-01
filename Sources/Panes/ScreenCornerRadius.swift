@@ -1,6 +1,15 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
-func screenCornerRadius(for width: CGFloat = UIScreen.main.bounds.width) -> CGFloat {
+public func screenCornerRadius(for width: CGFloat = {
+    #if canImport(UIKit)
+    UIScreen.main.bounds.width
+    #else
+    390
+    #endif
+}()) -> CGFloat {
     switch width {
     case 430: return 53
     case 414: return 50

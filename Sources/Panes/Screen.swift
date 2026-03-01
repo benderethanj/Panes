@@ -1,24 +1,25 @@
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
 
 // MARK: - Public API (back-compat helpers)
 @MainActor
 @Observable
-final class ScreenMetrics {
-    static let shared = ScreenMetrics()
+public final class ScreenMetrics {
+    public static let shared = ScreenMetrics()
 
     private init() {}
 
     // Published state
-    private(set) var insets: UIEdgeInsets = .zero
-    private(set) var size: CGSize = .zero
-    private(set) var orientation: UIInterfaceOrientation = .unknown
+    public private(set) var insets: UIEdgeInsets = .zero
+    public private(set) var size: CGSize = .zero
+    public private(set) var orientation: UIInterfaceOrientation = .unknown
 
     // Internals
     private weak var window: UIWindow?
 
     // Attach once we can resolve the actual key window from SwiftUI
-    func attach(window: UIWindow) {
+    public func attach(window: UIWindow) {
         if self.window == nil { self.window = window }
         // Always refresh metrics on resolve (rotation/splitview/layout changes)
         updateFromWindow()
@@ -37,6 +38,7 @@ final class ScreenMetrics {
 
 /// Embed once at the root of your app/view tree to keep `ScreenMetrics.shared` up-to-date.
 public struct ScreenMetricsInjector: ViewModifier {
+    public init() {}
 
     public func body(content: Content) -> some View {
         content
@@ -129,16 +131,17 @@ private struct WindowResolver: UIViewRepresentable {
 }
 
 // MARK: - Back-compat global helpers
-@MainActor @inline(__always) func orientation() -> UIInterfaceOrientation { ScreenMetrics.shared.orientation }
-@MainActor @inline(__always) func isPortrait() -> Bool { ScreenMetrics.shared.orientation.isPortrait }
-@MainActor @inline(__always) func isLandscape() -> Bool { ScreenMetrics.shared.orientation.isLandscape }
-@MainActor @inline(__always) func isLandscapeLeft() -> Bool { ScreenMetrics.shared.orientation == .landscapeLeft }
-@MainActor @inline(__always) func isLandscapeRight() -> Bool { ScreenMetrics.shared.orientation == .landscapeRight }
-@MainActor @inline(__always) func screenSize() -> CGSize { ScreenMetrics.shared.size }
-@MainActor @inline(__always) func screenWidth() -> CGFloat { ScreenMetrics.shared.size.width }
-@MainActor @inline(__always) func screenHeight() -> CGFloat { ScreenMetrics.shared.size.height }
-@MainActor @inline(__always) func insets() -> UIEdgeInsets { ScreenMetrics.shared.insets }
-@MainActor @inline(__always) func topInset() -> CGFloat { ScreenMetrics.shared.insets.top }
-@MainActor @inline(__always) func bottomInset() -> CGFloat { ScreenMetrics.shared.insets.bottom }
-@MainActor @inline(__always) func leftInset() -> CGFloat { ScreenMetrics.shared.insets.left }
-@MainActor @inline(__always) func rightInset() -> CGFloat { ScreenMetrics.shared.insets.right }
+@MainActor @inline(__always) public func orientation() -> UIInterfaceOrientation { ScreenMetrics.shared.orientation }
+@MainActor @inline(__always) public func isPortrait() -> Bool { ScreenMetrics.shared.orientation.isPortrait }
+@MainActor @inline(__always) public func isLandscape() -> Bool { ScreenMetrics.shared.orientation.isLandscape }
+@MainActor @inline(__always) public func isLandscapeLeft() -> Bool { ScreenMetrics.shared.orientation == .landscapeLeft }
+@MainActor @inline(__always) public func isLandscapeRight() -> Bool { ScreenMetrics.shared.orientation == .landscapeRight }
+@MainActor @inline(__always) public func screenSize() -> CGSize { ScreenMetrics.shared.size }
+@MainActor @inline(__always) public func screenWidth() -> CGFloat { ScreenMetrics.shared.size.width }
+@MainActor @inline(__always) public func screenHeight() -> CGFloat { ScreenMetrics.shared.size.height }
+@MainActor @inline(__always) public func insets() -> UIEdgeInsets { ScreenMetrics.shared.insets }
+@MainActor @inline(__always) public func topInset() -> CGFloat { ScreenMetrics.shared.insets.top }
+@MainActor @inline(__always) public func bottomInset() -> CGFloat { ScreenMetrics.shared.insets.bottom }
+@MainActor @inline(__always) public func leftInset() -> CGFloat { ScreenMetrics.shared.insets.left }
+@MainActor @inline(__always) public func rightInset() -> CGFloat { ScreenMetrics.shared.insets.right }
+#endif

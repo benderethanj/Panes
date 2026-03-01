@@ -1,18 +1,18 @@
 import SwiftUI
 import Combine
 
-struct SmartScroll<Content: View>: View {
-    let content: (SmartScrollProxy) -> Content
+public struct SmartScroll<Content: View>: View {
+    public let content: (SmartScrollProxy) -> Content
     @StateObject private var proxy = SmartScrollProxy()
     private let offsetBinding: Binding<CGFloat>?
 
-    init(_ offset: Binding<CGFloat>? = nil,
+    public init(_ offset: Binding<CGFloat>? = nil,
          @ViewBuilder content: @escaping (SmartScrollProxy) -> Content) {
         self.content = content
         self.offsetBinding = offset
     }
     
-    var body: some View {
+    public var body: some View {
         ScrollViewReader { scroll in
             ScrollView {
                 ZStack(alignment: .top) {
@@ -84,42 +84,44 @@ struct SmartScroll<Content: View>: View {
     }
 }
 
-enum SmartScrollReference {
+public enum SmartScrollReference {
     case top, bottom
 }
 
-class SmartScrollProxy: ObservableObject {
-    var reference: SmartScrollReference = .bottom
+public final class SmartScrollProxy: ObservableObject {
+    public var reference: SmartScrollReference = .bottom
     
-    @Published var frame: CGRect = .zero
-    @Published var contents: CGRect = .zero
-    @Published var detector: CGRect = .zero
-    @Published var offset: CGFloat = .zero
+    @Published public var frame: CGRect = .zero
+    @Published public var contents: CGRect = .zero
+    @Published public var detector: CGRect = .zero
+    @Published public var offset: CGFloat = .zero
     
-    var scroll: ScrollViewProxy?
+    public var scroll: ScrollViewProxy?
+
+    public init() {}
     
-    func scroll(to offset: CGFloat, anchor: UnitPoint = .bottom, reference: SmartScrollReference = .bottom) {
+    public func scroll(to offset: CGFloat, anchor: UnitPoint = .bottom, reference: SmartScrollReference = .bottom) {
         if let scroll {
             self.offset = reference == .top ? offset : contents.height - offset
             scroll.scrollTo("offset", anchor: anchor)
         }
     }
     
-    func scroll(on id: any Hashable, anchor: UnitPoint = .top) {
+    public func scroll(on id: any Hashable, anchor: UnitPoint = .top) {
         if let scroll {
             scroll.scrollTo(id, anchor: anchor)
         }
     }
     
-    func position(reference: SmartScrollReference) -> CGFloat {
+    public func position(reference: SmartScrollReference) -> CGFloat {
         return reference == .top ? -self.detector.origin.y: contents.height + self.detector.origin.y - self.frame.height
     }
     
-    func bottom() {
+    public func bottom() {
         scroll(on: "bottom", anchor: .bottom)
     }
     
-    func top() {
+    public func top() {
         scroll(on: "top", anchor: .top)
     }
 }

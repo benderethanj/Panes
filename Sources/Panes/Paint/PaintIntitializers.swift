@@ -1,6 +1,6 @@
 import SwiftUI
 
-extension Paint {
+public extension Paint {
     // MARK: RGB
     init(r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat = 1) {
         self.R = r

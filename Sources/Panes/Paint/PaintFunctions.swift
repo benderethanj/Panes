@@ -1,6 +1,6 @@
 import SwiftUI
 
-extension Paint {
+public extension Paint {
     static func +(lhs: Paint, rhs: Paint) -> Paint {
         Paint(r: (lhs.R + rhs.R) / 2, g: (lhs.G + rhs.G) / 2, b: (lhs.B + rhs.B) / 2, a: max(lhs.A, rhs.A))
     }
@@ -19,8 +19,7 @@ extension Paint {
 }
 
 
-
-extension Array where Element == Paint {
+public extension Array where Element == Paint {
     func colors() -> [Color] {
         var colors: [Color] = []
         for paint in self {
