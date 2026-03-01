@@ -282,24 +282,31 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
     func makeUIView(context: Context) -> PaneIntrospectionView {
         let view = PaneIntrospectionView()
         view.onLayoutOrAttach = { hostView in
-            context.coordinator.attachIfPossible(from: hostView, state: state)
+            Task { @MainActor in
+                context.coordinator.attachIfPossible(from: hostView, state: state)
+            }
         }
         return view
     }
 
     func updateUIView(_ uiView: PaneIntrospectionView, context: Context) {
         uiView.onLayoutOrAttach = { hostView in
-            context.coordinator.attachIfPossible(from: hostView, state: state)
+            Task { @MainActor in
+                context.coordinator.attachIfPossible(from: hostView, state: state)
+            }
         }
-        DispatchQueue.main.async {
+        Task { @MainActor in
             context.coordinator.attachIfPossible(from: uiView, state: state)
         }
     }
 
     static func dismantleUIView(_ uiView: PaneIntrospectionView, coordinator: Coordinator) {
-        coordinator.detach()
+        Task { @MainActor in
+            coordinator.detach()
+        }
     }
 
+    @MainActor
     final class Coordinator: NSObject {
         private weak var scrollView: UIScrollView?
         private weak var state: PaneScrollState?
@@ -324,16 +331,24 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
                 invalidateObservers()
                 scrollView = resolvedScrollView
                 contentOffsetObserver = resolvedScrollView.observe(\.contentOffset, options: [.initial, .new]) { [weak self] _, _ in
-                    self?.publishMetrics()
+                    Task { @MainActor in
+                        self?.publishMetrics()
+                    }
                 }
                 contentSizeObserver = resolvedScrollView.observe(\.contentSize, options: [.initial, .new]) { [weak self] _, _ in
-                    self?.publishMetrics()
+                    Task { @MainActor in
+                        self?.publishMetrics()
+                    }
                 }
                 boundsObserver = resolvedScrollView.observe(\.bounds, options: [.initial, .new]) { [weak self] _, _ in
-                    self?.publishMetrics()
+                    Task { @MainActor in
+                        self?.publishMetrics()
+                    }
                 }
                 contentInsetObserver = resolvedScrollView.observe(\.contentInset, options: [.initial, .new]) { [weak self] _, _ in
-                    self?.publishMetrics()
+                    Task { @MainActor in
+                        self?.publishMetrics()
+                    }
                 }
             }
 
@@ -351,22 +366,20 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
             let maxOffset = max(0, contentLength - viewportLength)
             let bottomEdgeDistance = max(0, maxOffset - offset)
 
-            DispatchQueue.main.async {
-                if abs(state.scrollOffset - offset) > 0.5 {
-                    state.scrollOffset = offset
-                }
-                if abs(state.contentLength - contentLength) > 0.5 {
-                    state.contentLength = contentLength
-                }
-                if abs(state.viewportLength - viewportLength) > 0.5 {
-                    state.viewportLength = viewportLength
-                }
-                if abs(state.maxScrollOffset - maxOffset) > 0.5 {
-                    state.maxScrollOffset = maxOffset
-                }
-                if abs(state.bottomEdgeDistance - bottomEdgeDistance) > 0.5 {
-                    state.bottomEdgeDistance = bottomEdgeDistance
-                }
+            if abs(state.scrollOffset - offset) > 0.5 {
+                state.scrollOffset = offset
+            }
+            if abs(state.contentLength - contentLength) > 0.5 {
+                state.contentLength = contentLength
+            }
+            if abs(state.viewportLength - viewportLength) > 0.5 {
+                state.viewportLength = viewportLength
+            }
+            if abs(state.maxScrollOffset - maxOffset) > 0.5 {
+                state.maxScrollOffset = maxOffset
+            }
+            if abs(state.bottomEdgeDistance - bottomEdgeDistance) > 0.5 {
+                state.bottomEdgeDistance = bottomEdgeDistance
             }
         }
 
