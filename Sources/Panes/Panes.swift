@@ -843,7 +843,7 @@ private struct ResolvedPaneDetent {
     let height: CGFloat
 }
 
-private struct PaneModifier<SheetContent: View>: ViewModifier {
+public struct PaneModifier<SheetContent: View>: ViewModifier {
     private enum DragMode {
         case pane
         case content
@@ -853,7 +853,7 @@ private struct PaneModifier<SheetContent: View>: ViewModifier {
     @Binding var selectedDetent: PaneDetent
     let options: PaneConfig
     let onDismiss: (() -> Void)?
-    let paneContent: (PaneContext) -> SheetContent
+    public let paneContent: (PaneContext) -> SheetContent
 
     @StateObject private var scrollState = PaneScrollState()
     @State private var dragTranslation: CGFloat = 0
