@@ -15,7 +15,7 @@ struct PaneDemoView: View {
 
     private var presentationOptions: PaneConfig {
         PaneConfig(
-            detents: [.fraction(0.2), .large],
+            detents: [.fraction(0.2), .medium, .large],
             largestUndimmedDetent: .large,
             showsDragIndicator: showDragIndicator,
             allowsBackgroundInteraction: allowsBackgroundInteraction,
