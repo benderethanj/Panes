@@ -12,6 +12,10 @@ struct PaneDemoView: View {
     @State private var anchorPreset: PaneAnchorPreset = .bottom
     @State private var expansionAxis: PaneExpansionAxis = .vertical
     @State private var pinTaggedViewOnCollapse = true
+    @State private var allowsContentInteractionWhenCollapsed = true
+    @State private var dragIndicatorTouchExtension: CGFloat = 0
+    @State private var deferTopSystemGestures = false
+    @State private var deferBottomSystemGestures = false
 
     private var presentationOptions: PaneConfig {
         PaneConfig(
@@ -30,7 +34,10 @@ struct PaneDemoView: View {
             expansionAxis: expansionAxis,
             collapsedScrollAnchorTag: pinTaggedViewOnCollapse ? AnyHashable("collapse-anchor") : nil,
             collapsedScrollAnchor: .top,
-            keepsCollapsedScrollAnchorPinned: pinTaggedViewOnCollapse
+            keepsCollapsedScrollAnchorPinned: pinTaggedViewOnCollapse,
+            dragIndicatorTouchExtension: dragIndicatorTouchExtension,
+            allowsContentInteractionWhenNotFullyExpanded: allowsContentInteractionWhenCollapsed,
+            systemGestureDeferralEdges: systemGestureDeferralEdges
         )
     }
 
@@ -91,11 +98,21 @@ struct PaneDemoView: View {
                             Slider(value: $widthFraction, in: 0.3...1)
                         }
 
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Indicator Touch Extension \(Int(dragIndicatorTouchExtension.rounded()))pt")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Slider(value: $dragIndicatorTouchExtension, in: 0...36, step: 1)
+                        }
+
                         Toggle("Show Drag Indicator", isOn: $showDragIndicator)
                         Toggle("Allow Background Interaction", isOn: $allowsBackgroundInteraction)
                         Toggle("Allow Swipe To Dismiss", isOn: $allowsSwipeToDismiss)
                         Toggle("Tap Outside To Dismiss", isOn: $tapOutsideToDismiss)
                         Toggle("Pin Tagged View On Collapse", isOn: $pinTaggedViewOnCollapse)
+                        Toggle("Allow Content Interaction When Partial", isOn: $allowsContentInteractionWhenCollapsed)
+                        Toggle("Defer Top System Gestures", isOn: $deferTopSystemGestures)
+                        Toggle("Defer Bottom System Gestures", isOn: $deferBottomSystemGestures)
                     }
                     .padding(.top, 4)
                 }
@@ -184,6 +201,19 @@ struct PaneDemoView: View {
                 return "Expands equally left and right from center."
             }
         }
+    }
+
+    private var systemGestureDeferralEdges: Edge.Set {
+        var edges: Edge.Set = []
+
+        if deferTopSystemGestures {
+            edges.formUnion(.top)
+        }
+        if deferBottomSystemGestures {
+            edges.formUnion(.bottom)
+        }
+
+        return edges
     }
 }
 

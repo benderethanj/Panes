@@ -63,7 +63,10 @@ public struct PaneConfig {
     public var collapsedScrollAnchor: UnitPoint
     public var keepsCollapsedScrollAnchorPinned: Bool
     public var dragIndicatorContentInset: CGFloat
+    public var dragIndicatorTouchExtension: CGFloat
     public var dragIndicatorFadeLength: CGFloat
+    public var allowsContentInteractionWhenNotFullyExpanded: Bool
+    public var systemGestureDeferralEdges: Edge.Set
 
     public var dismissThresholdMultiplier: CGFloat
     public var animation: Animation
@@ -86,7 +89,10 @@ public struct PaneConfig {
         collapsedScrollAnchor: UnitPoint = .top,
         keepsCollapsedScrollAnchorPinned: Bool = false,
         dragIndicatorContentInset: CGFloat = 12,
+        dragIndicatorTouchExtension: CGFloat = 0,
         dragIndicatorFadeLength: CGFloat = 24,
+        allowsContentInteractionWhenNotFullyExpanded: Bool = true,
+        systemGestureDeferralEdges: Edge.Set = [],
         dismissThresholdMultiplier: CGFloat = 0.7,
         animation: Animation = .interactiveSpring(response: 0.28, dampingFraction: 0.88, blendDuration: 0.2)
     ) {
@@ -107,7 +113,10 @@ public struct PaneConfig {
         self.collapsedScrollAnchor = collapsedScrollAnchor
         self.keepsCollapsedScrollAnchorPinned = keepsCollapsedScrollAnchorPinned
         self.dragIndicatorContentInset = dragIndicatorContentInset
+        self.dragIndicatorTouchExtension = dragIndicatorTouchExtension
         self.dragIndicatorFadeLength = dragIndicatorFadeLength
+        self.allowsContentInteractionWhenNotFullyExpanded = allowsContentInteractionWhenNotFullyExpanded
+        self.systemGestureDeferralEdges = systemGestureDeferralEdges
         self.dismissThresholdMultiplier = dismissThresholdMultiplier
         self.animation = animation
     }
@@ -247,6 +256,18 @@ private struct PaneScrollBottomMarkerMaxYKey: PreferenceKey {
     }
 }
 
+private struct PaneAnchorFrameMap: Equatable, @unchecked Sendable {
+    var values: [AnyHashable: CGRect] = [:]
+}
+
+private struct PaneAnchorFrameKey: PreferenceKey {
+    static let defaultValue = PaneAnchorFrameMap()
+
+    static func reduce(value: inout PaneAnchorFrameMap, nextValue: () -> PaneAnchorFrameMap) {
+        value.values.merge(nextValue().values, uniquingKeysWith: { _, new in new })
+    }
+}
+
 private struct PaneScrollChrome: Equatable {
     var indicatorInsets: EdgeInsets = .init()
     var fadeLength: CGFloat = 0
@@ -275,6 +296,76 @@ private extension EnvironmentValues {
 }
 
 #if canImport(UIKit)
+private struct PaneSystemGestureDeferralBridge: UIViewControllerRepresentable {
+    let edges: Edge.Set
+
+    func makeUIViewController(context: Context) -> PaneSystemGestureDeferralViewController {
+        PaneSystemGestureDeferralViewController()
+    }
+
+    func updateUIViewController(_ uiViewController: PaneSystemGestureDeferralViewController, context: Context) {
+        uiViewController.deferredEdges = edges.paneUIRectEdges
+    }
+
+    static func dismantleUIViewController(_ uiViewController: PaneSystemGestureDeferralViewController, coordinator: ()) {
+        uiViewController.deferredEdges = []
+    }
+}
+
+@MainActor
+private final class PaneSystemGestureDeferralViewController: UIViewController {
+    var deferredEdges: UIRectEdge = [] {
+        didSet {
+            guard oldValue != deferredEdges else { return }
+            setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
+            parent?.setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
+        }
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+    }
+
+    override func didMove(toParent parent: UIViewController?) {
+        super.didMove(toParent: parent)
+        setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
+        parent?.setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
+        parent?.setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
+    }
+
+    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge {
+        deferredEdges
+    }
+}
+
+private extension Edge.Set {
+    var paneUIRectEdges: UIRectEdge {
+        var edges: UIRectEdge = []
+
+        if contains(.top) {
+            edges.insert(.top)
+        }
+        if contains(.leading) {
+            edges.insert(.left)
+        }
+        if contains(.bottom) {
+            edges.insert(.bottom)
+        }
+        if contains(.trailing) {
+            edges.insert(.right)
+        }
+
+        return edges
+    }
+}
+
 private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
     @ObservedObject var state: PaneScrollState
 
@@ -444,11 +535,11 @@ public struct PaneScrollView<Content: View>: View {
     @State private var latestViewportGlobalMinY: CGFloat = .greatestFiniteMagnitude
     @State private var latestBottomMarkerGlobalMaxY: CGFloat = .greatestFiniteMagnitude
     @State private var latestViewportGlobalMaxY: CGFloat = .greatestFiniteMagnitude
+    @State private var anchorGlobalFrames: [AnyHashable: CGRect] = [:]
     @State private var lastAppliedInteractiveAnchorProgress: CGFloat = 0
     @State private var interactiveAnchorStartOffset: CGFloat?
     @State private var interactiveAnchorTargetOffset: CGFloat?
     @State private var interactiveAnchorCapturedTag: AnyHashable?
-    @State private var isCapturingInteractiveAnchorOffsets = false
     @State private var interactiveAnchorCaptureFailed = false
     @State private var cachedCollapsedAnchorOffsetY: CGFloat?
     private let paneTopSentinelID = AnyHashable("__pane-scroll-top-sentinel__")
@@ -515,6 +606,12 @@ public struct PaneScrollView<Content: View>: View {
                 }
             }
             .coordinateSpace(name: scrollSpaceID)
+            .onPreferenceChange(PaneAnchorFrameKey.self) { anchorFrames in
+                anchorGlobalFrames = anchorFrames.values
+                #if canImport(UIKit)
+                refreshCollapsedAnchorCacheIfPossible(using: anchorFrames.values)
+                #endif
+            }
             .background {
                 GeometryReader { proxy in
                     Color.clear.preference(
@@ -624,10 +721,13 @@ public struct PaneScrollView<Content: View>: View {
         let clampedOld = oldProgress.clamped(to: 0...1)
         let clampedNew = newProgress.clamped(to: 0...1)
 
-        if interactiveAnchorCapturedTag != collapsedScrollAnchorTag {
+        if let capturedTag = interactiveAnchorCapturedTag,
+           capturedTag != collapsedScrollAnchorTag {
             resetInteractiveAnchorInterpolationState()
-            interactiveAnchorCapturedTag = collapsedScrollAnchorTag
             cachedCollapsedAnchorOffsetY = nil
+        }
+        if interactiveAnchorCapturedTag == nil {
+            interactiveAnchorCapturedTag = collapsedScrollAnchorTag
         }
 
         if clampedNew <= 0.001 {
@@ -643,9 +743,6 @@ public struct PaneScrollView<Content: View>: View {
 
         #if canImport(UIKit)
         if !isInteractiveAnchorInterpolationReady {
-            if isCapturingInteractiveAnchorOffsets {
-                return
-            }
             if !interactiveAnchorCaptureFailed, state.scrollView != nil {
                 return
             }
@@ -678,7 +775,6 @@ public struct PaneScrollView<Content: View>: View {
         interactiveAnchorStartOffset = nil
         interactiveAnchorTargetOffset = nil
         interactiveAnchorCapturedTag = nil
-        isCapturingInteractiveAnchorOffsets = false
         interactiveAnchorCaptureFailed = false
     }
 
@@ -689,54 +785,74 @@ public struct PaneScrollView<Content: View>: View {
         return abs(target - start) > 0.5
     }
 
-    private func captureInteractiveAnchorOffsetsIfNeeded(using proxy: ScrollViewProxy, tag: AnyHashable) {
+    private func captureInteractiveAnchorOffsetsIfNeeded(using _: ScrollViewProxy, tag: AnyHashable) {
         #if canImport(UIKit)
-        guard interactiveAnchorStartOffset == nil || interactiveAnchorTargetOffset == nil else { return }
-        guard !isCapturingInteractiveAnchorOffsets else { return }
         guard let scrollView = state.scrollView else {
             interactiveAnchorCaptureFailed = true
             return
         }
 
-        let startOffsetY = scrollView.contentOffset.y
-        isCapturingInteractiveAnchorOffsets = true
-        interactiveAnchorCaptureFailed = false
-
-        var transaction = Transaction(animation: .none)
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            proxy.scrollTo(paneTopSentinelID, anchor: .top)
-            proxy.scrollTo(tag, anchor: collapsedScrollAnchor)
+        if interactiveAnchorStartOffset == nil {
+            interactiveAnchorStartOffset = scrollView.contentOffset.y
         }
 
-        DispatchQueue.main.async {
-            guard let activeScrollView = state.scrollView else {
-                isCapturingInteractiveAnchorOffsets = false
-                interactiveAnchorCaptureFailed = true
-                return
-            }
-
-            let targetOffsetY = activeScrollView.contentOffset.y
-            activeScrollView.setContentOffset(
-                CGPoint(x: activeScrollView.contentOffset.x, y: startOffsetY),
-                animated: false
-            )
-            interactiveAnchorStartOffset = startOffsetY
-            if abs(targetOffsetY - startOffsetY) > 0.5 {
-                interactiveAnchorTargetOffset = targetOffsetY
-                cachedCollapsedAnchorOffsetY = targetOffsetY
-                interactiveAnchorCaptureFailed = false
-            } else if let cached = cachedCollapsedAnchorOffsetY, abs(cached - startOffsetY) > 0.5 {
-                interactiveAnchorTargetOffset = cached
-                interactiveAnchorCaptureFailed = false
-            } else {
-                interactiveAnchorTargetOffset = nil
-                interactiveAnchorCaptureFailed = true
-            }
-            isCapturingInteractiveAnchorOffsets = false
+        if let targetOffsetY = collapsedAnchorOffsetY(for: tag, in: scrollView) {
+            interactiveAnchorTargetOffset = targetOffsetY
+            cachedCollapsedAnchorOffsetY = targetOffsetY
+            interactiveAnchorCaptureFailed = false
+        } else if let startOffsetY = interactiveAnchorStartOffset,
+                  let cached = cachedCollapsedAnchorOffsetY,
+                  abs(cached - startOffsetY) > 0.5 {
+            interactiveAnchorTargetOffset = cached
+            interactiveAnchorCaptureFailed = false
+        } else {
+            interactiveAnchorTargetOffset = nil
+            interactiveAnchorCaptureFailed = true
         }
         #endif
     }
+
+    #if canImport(UIKit)
+    private func refreshCollapsedAnchorCacheIfPossible(using anchorFrames: [AnyHashable: CGRect]) {
+        guard let collapsedScrollAnchorTag else { return }
+        guard let scrollView = state.scrollView else { return }
+        guard let targetOffsetY = collapsedAnchorOffsetY(
+            for: collapsedScrollAnchorTag,
+            in: scrollView,
+            anchorFrames: anchorFrames
+        ) else {
+            return
+        }
+
+        cachedCollapsedAnchorOffsetY = targetOffsetY
+    }
+
+    private func collapsedAnchorOffsetY(for tag: AnyHashable, in scrollView: UIScrollView) -> CGFloat? {
+        collapsedAnchorOffsetY(for: tag, in: scrollView, anchorFrames: anchorGlobalFrames)
+    }
+
+    private func collapsedAnchorOffsetY(
+        for tag: AnyHashable,
+        in scrollView: UIScrollView,
+        anchorFrames: [AnyHashable: CGRect]
+    ) -> CGFloat? {
+        guard let anchorFrame = anchorFrames[tag] else { return nil }
+
+        let inset = scrollView.adjustedContentInset
+        let viewportFrame = scrollView.convert(scrollView.bounds, to: nil)
+        let currentNormalizedOffset = max(0, scrollView.contentOffset.y + inset.top)
+        let anchorAlignmentY = collapsedScrollAnchor.y.clamped(to: 0...1)
+        let anchorVisibleY = (anchorFrame.minY - viewportFrame.minY) + (anchorFrame.height * anchorAlignmentY)
+        let targetNormalizedOffset = currentNormalizedOffset + anchorVisibleY - (scrollView.bounds.height * anchorAlignmentY)
+        let minOffsetY = -inset.top
+        let maxOffsetY = max(
+            minOffsetY,
+            scrollView.contentSize.height + inset.bottom - scrollView.bounds.height
+        )
+
+        return (targetNormalizedOffset - inset.top).clamped(to: minOffsetY...maxOffsetY)
+    }
+    #endif
 
     private func applyInteractiveCollapsedAnchorOffset(
         for progress: CGFloat,
@@ -781,14 +897,16 @@ public struct PaneScrollView<Content: View>: View {
         animated: Bool
     ) {
         #if canImport(UIKit)
-        if let scrollView = state.scrollView, let cachedOffset = cachedCollapsedAnchorOffsetY {
+        if let scrollView = state.scrollView,
+           let targetOffset = collapsedAnchorOffsetY(for: tag, in: scrollView) ?? cachedCollapsedAnchorOffsetY {
             let inset = scrollView.adjustedContentInset
             let minOffsetY = -inset.top
             let maxOffsetY = max(
                 minOffsetY,
                 scrollView.contentSize.height + inset.bottom - scrollView.bounds.height
             )
-            let clampedOffset = cachedOffset.clamped(to: minOffsetY...maxOffsetY)
+            let clampedOffset = targetOffset.clamped(to: minOffsetY...maxOffsetY)
+            cachedCollapsedAnchorOffsetY = clampedOffset
             scrollView.setContentOffset(
                 CGPoint(x: scrollView.contentOffset.x, y: clampedOffset),
                 animated: animated
@@ -1051,6 +1169,14 @@ private struct PaneAnchorTagModifier: ViewModifier {
                 .frame(height: markerHeight)
                 .allowsHitTesting(false)
                 .id(id)
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: PaneAnchorFrameKey.self,
+                            value: PaneAnchorFrameMap(values: [id: proxy.frame(in: .global)])
+                        )
+                    }
+                }
             content
         }
         .padding(.top, -markerHeight)
@@ -1099,6 +1225,7 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
     private let strongFlingVelocityThreshold: CGFloat = 2100
     private let maxBottomOvershoot: CGFloat = 96
     private let bottomOvershootResistance: CGFloat = 0.85
+    private let systemGestureDeferralActivationDistance: CGFloat = 56
     private let dragDismissCompletionDelay: TimeInterval = 0.42
     private let dragDismissAnimationSpeed: Double = 0.8
 
@@ -1135,6 +1262,7 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
                         expansionLength: interactiveHeight,
                         crossAxisLength: crossAxisLength
                     )
+                    let windowFrame = windowFrame(in: proxy)
                     let paneGlobalFrame = paneFrame.offsetBy(
                         dx: proxy.frame(in: .global).minX,
                         dy: proxy.frame(in: .global).minY
@@ -1181,6 +1309,13 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
                         isDraggingPane: isDraggingPane,
                         dragTranslation: dragTranslation
                     )
+                    let allowsPaneContentInteraction =
+                        options.allowsContentInteractionWhenNotFullyExpanded ||
+                        isAtMax(currentHeight: effectiveInteractiveHeight, maxHeight: maxHeight)
+                    let activeSystemGestureDeferralEdges = activeSystemGestureDeferralEdges(
+                        paneFrame: paneFrame,
+                        windowFrame: windowFrame
+                    )
                     let paneContext = PaneContext(
                         scrollState: scrollState,
                         isPresented: $isPresented,
@@ -1214,6 +1349,12 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
 
                     ZStack(alignment: .bottom) {
                         if isPresented || isDragDismissAnimating {
+                            #if canImport(UIKit)
+                            PaneSystemGestureDeferralBridge(edges: activeSystemGestureDeferralEdges)
+                                .frame(width: 0, height: 0)
+                                .allowsHitTesting(false)
+                            #endif
+
                             if needsBackdropLayer {
                                 Color.black.opacity(backdropOpacity)
                                     .contentShape(Rectangle())
@@ -1225,11 +1366,23 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
                                     }
                             }
 
+                            screenEdgeGestureCaptureOverlay(
+                                paneFrame: paneFrame,
+                                windowFrame: windowFrame,
+                                detents: detents,
+                                selectedHeight: selectedHeight,
+                                minHeight: minHeight,
+                                maxHeight: maxHeight,
+                                paneGlobalFrame: paneGlobalFrame,
+                                activeEdges: activeSystemGestureDeferralEdges
+                            )
+
                             VStack(spacing: 0) {
                                 paneContent(paneContext)
                                     .environment(\.paneScrollChrome, scrollChrome)
                                     .environment(\.paneInteractiveAnchorProgress, interactiveAnchorProgress)
                                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                    .allowsHitTesting(allowsPaneContentInteraction)
                             }
                             .frame(width: paneFrame.width, height: paneFrame.height, alignment: .top)
                             .background {
@@ -1475,6 +1628,45 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
             }
     }
 
+    @ViewBuilder
+    private func screenEdgeGestureCaptureOverlay(
+        paneFrame: CGRect,
+        windowFrame: CGRect,
+        detents: [ResolvedPaneDetent],
+        selectedHeight: CGFloat,
+        minHeight: CGFloat,
+        maxHeight: CGFloat,
+        paneGlobalFrame: CGRect,
+        activeEdges: Edge.Set
+    ) -> some View {
+        let captureZones = screenEdgeCaptureZones(
+            paneFrame: paneFrame,
+            windowFrame: windowFrame,
+            activeEdges: activeEdges
+        )
+
+        if !captureZones.isEmpty {
+            ZStack {
+                ForEach(Array(captureZones.enumerated()), id: \.offset) { _, rect in
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .frame(width: rect.width, height: rect.height)
+                        .position(x: rect.midX, y: rect.midY)
+                        .gesture(
+                            dragGesture(
+                                detents: detents,
+                                selectedHeight: selectedHeight,
+                                minHeight: minHeight,
+                                maxHeight: maxHeight,
+                                paneGlobalFrame: paneGlobalFrame
+                            ),
+                            including: .all
+                        )
+                }
+            }
+        }
+    }
+
     private func shouldDrivePane(
         translation: CGFloat,
         expansionSign: CGFloat,
@@ -1543,7 +1735,10 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         let visualThickness: CGFloat = 5
         let indicatorPadding: CGFloat = 10
         let handleLength = visualLength + 14
-        let handleThickness = visualThickness + (indicatorPadding * 2) + 8
+        let handleThickness = max(
+            visualThickness + (indicatorPadding * 2),
+            max(0, options.dragIndicatorContentInset)
+        ) + max(0, options.dragIndicatorTouchExtension)
         let hitSlop: CGFloat = 4
 
         for alignment in dragIndicatorAlignments {
@@ -1587,6 +1782,127 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         }
 
         return false
+    }
+
+    private func screenEdgeCaptureZones(
+        paneFrame: CGRect,
+        windowFrame: CGRect,
+        activeEdges: Edge.Set
+    ) -> [CGRect] {
+        var zones: [CGRect] = []
+
+        if activeEdges.contains(.top) {
+            let height = max(0, paneFrame.minY - windowFrame.minY)
+            if height > 0.5 {
+                zones.append(
+                    CGRect(
+                        x: paneFrame.minX,
+                        y: windowFrame.minY,
+                        width: paneFrame.width,
+                        height: height
+                    )
+                )
+            }
+        }
+
+        if activeEdges.contains(.bottom) {
+            let height = max(0, windowFrame.maxY - paneFrame.maxY)
+            if height > 0.5 {
+                zones.append(
+                    CGRect(
+                        x: paneFrame.minX,
+                        y: paneFrame.maxY,
+                        width: paneFrame.width,
+                        height: height
+                    )
+                )
+            }
+        }
+
+        if activeEdges.contains(.leading) {
+            let width = max(0, paneFrame.minX - windowFrame.minX)
+            if width > 0.5 {
+                zones.append(
+                    CGRect(
+                        x: windowFrame.minX,
+                        y: paneFrame.minY,
+                        width: width,
+                        height: paneFrame.height
+                    )
+                )
+            }
+        }
+
+        if activeEdges.contains(.trailing) {
+            let width = max(0, windowFrame.maxX - paneFrame.maxX)
+            if width > 0.5 {
+                zones.append(
+                    CGRect(
+                        x: paneFrame.maxX,
+                        y: paneFrame.minY,
+                        width: width,
+                        height: paneFrame.height
+                    )
+                )
+            }
+        }
+
+        return zones
+    }
+
+    private func activeSystemGestureDeferralEdges(
+        paneFrame: CGRect,
+        windowFrame: CGRect
+    ) -> Edge.Set {
+        guard !options.systemGestureDeferralEdges.isEmpty else { return [] }
+
+        var activeEdges: Edge.Set = []
+
+        if options.systemGestureDeferralEdges.contains(.top) {
+            let gap = max(0, paneFrame.minY - windowFrame.minY)
+            if gap <= systemGestureDeferralActivationDistance {
+                activeEdges.formUnion(.top)
+            }
+        }
+
+        if options.systemGestureDeferralEdges.contains(.bottom) {
+            let gap = max(0, windowFrame.maxY - paneFrame.maxY)
+            if gap <= systemGestureDeferralActivationDistance {
+                activeEdges.formUnion(.bottom)
+            }
+        }
+
+        if options.systemGestureDeferralEdges.contains(.leading) {
+            let gap = max(0, paneFrame.minX - windowFrame.minX)
+            if gap <= systemGestureDeferralActivationDistance {
+                activeEdges.formUnion(.leading)
+            }
+        }
+
+        if options.systemGestureDeferralEdges.contains(.trailing) {
+            let gap = max(0, windowFrame.maxX - paneFrame.maxX)
+            if gap <= systemGestureDeferralActivationDistance {
+                activeEdges.formUnion(.trailing)
+            }
+        }
+
+        return activeEdges
+    }
+
+    private func windowFrame(in proxy: GeometryProxy) -> CGRect {
+        let globalFrame = proxy.frame(in: .global)
+        #if canImport(UIKit)
+        let windowBounds = currentWindowBounds() ?? CGRect(origin: .zero, size: proxy.size)
+        #else
+        let windowBounds = CGRect(origin: .zero, size: proxy.size)
+        #endif
+
+        return CGRect(
+            x: windowBounds.minX - globalFrame.minX,
+            y: windowBounds.minY - globalFrame.minY,
+            width: windowBounds.width,
+            height: windowBounds.height
+        )
     }
 
     private func paneLayoutBounds(in proxy: GeometryProxy, safeAreaInsets: EdgeInsets) -> CGRect {
