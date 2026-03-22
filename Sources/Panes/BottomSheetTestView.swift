@@ -12,6 +12,8 @@ struct PaneDemoView: View {
     @State private var anchorPreset: PaneAnchorPreset = .bottom
     @State private var expansionAxis: PaneExpansionAxis = .vertical
     @State private var pinTaggedViewOnCollapse = true
+    @State private var trackTaggedViewWhileCollapsed = false
+    @State private var snapScrollToViews = false
     @State private var allowsContentInteractionWhenCollapsed = true
     @State private var dragIndicatorTouchExtension: CGFloat = 0
     @State private var deferTopSystemGestures = false
@@ -35,9 +37,11 @@ struct PaneDemoView: View {
             collapsedScrollAnchorTag: pinTaggedViewOnCollapse ? AnyHashable("collapse-anchor") : nil,
             collapsedScrollAnchor: .top,
             keepsCollapsedScrollAnchorPinned: pinTaggedViewOnCollapse,
+            tracksCollapsedScrollAnchor: trackTaggedViewWhileCollapsed,
+            scrollSnapBehavior: snapScrollToViews ? .viewAligned : .none,
             dragIndicatorTouchExtension: dragIndicatorTouchExtension,
             allowsContentInteractionWhenNotFullyExpanded: allowsContentInteractionWhenCollapsed,
-            systemGestureDeferralEdges: systemGestureDeferralEdges
+            systemGestureDeferralEdges: systemGestureDeferralEdges,
         )
     }
 
@@ -110,6 +114,8 @@ struct PaneDemoView: View {
                         Toggle("Allow Swipe To Dismiss", isOn: $allowsSwipeToDismiss)
                         Toggle("Tap Outside To Dismiss", isOn: $tapOutsideToDismiss)
                         Toggle("Pin Tagged View On Collapse", isOn: $pinTaggedViewOnCollapse)
+                        Toggle("Track Tagged View While Partial", isOn: $trackTaggedViewWhileCollapsed)
+                        Toggle("Snap Scroll To Views", isOn: $snapScrollToViews)
                         Toggle("Allow Content Interaction When Partial", isOn: $allowsContentInteractionWhenCollapsed)
                         Toggle("Defer Top System Gestures", isOn: $deferTopSystemGestures)
                         Toggle("Defer Bottom System Gestures", isOn: $deferBottomSystemGestures)
@@ -131,6 +137,8 @@ struct PaneDemoView: View {
                 state: context.scrollState,
                 collapsedScrollAnchorTag: context.options.collapsedScrollAnchorTag,
                 shouldPinCollapsedScrollAnchor: context.options.keepsCollapsedScrollAnchorPinned && !context.isSelectedDetentFullyExpanded,
+                tracksCollapsedScrollAnchor: context.options.tracksCollapsedScrollAnchor,
+                scrollSnapBehavior: context.options.scrollSnapBehavior,
                 collapsedScrollAnchor: context.options.collapsedScrollAnchor
             ) {
                 LazyVStack(alignment: .leading, spacing: 12) {
@@ -142,6 +150,14 @@ struct PaneDemoView: View {
                     Text("Detent: \(context.selectedDetentLabel)  |  Progress: \(Int((context.expansionProgress * 100).rounded()))%")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
+
+                    #if canImport(UIKit)
+                    Text(
+                        "Offset \(Int(context.scrollState.scrollOffset.rounded()))  |  Pan \(context.scrollState.panGestureStartContentOffsetY.map { String(Int($0.rounded())) } ?? "-")  |  Lock Δ \(Int(context.scrollState.lastLockedOffsetCorrectionDeltaY.rounded()))  |  Freeze \(context.scrollState.frozenViewportSnapshot == nil ? "off" : "on")  |  Block \(context.scrollState.preHandoffPanShouldBeginBlockCount)  |  Pass \(context.scrollState.preHandoffPanShouldBeginPassCount)  |  Bounce \(context.scrollState.preHandoffBounceSuppressed ? "off" : "on")"
+                    )
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    #endif
 
                     Text("Drag the pane, scroll this content, and swipe down from the top to collapse. Scroll gestures expand/collapse the pane until it reaches min/max detents.")
                         .font(.subheadline)
