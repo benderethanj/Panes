@@ -547,6 +547,13 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
                 scrollView.contentSize.height + inset.bottom - scrollView.bounds.height
             )
 
+            armPreHandoffCollapseLockIfNeeded(
+                scrollView: scrollView,
+                state: state,
+                minOffsetY: minOffsetY,
+                maxOffsetY: maxOffsetY
+            )
+
             if let lockedContentOffsetY = state.lockedContentOffsetY {
                 let clampedLockedOffsetY = lockedContentOffsetY.clamped(to: minOffsetY...maxOffsetY)
                 state.lastLockedOffsetCorrectionDeltaY = scrollView.contentOffset.y - clampedLockedOffsetY
@@ -736,6 +743,38 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
             state.scrollDrivenPanePredictedTranslation = 0
             state.scrollDrivenPaneActive = false
             state.panGestureStartContentOffsetY = nil
+        }
+
+        private func armPreHandoffCollapseLockIfNeeded(
+            scrollView: UIScrollView,
+            state: PaneScrollState,
+            minOffsetY: CGFloat,
+            maxOffsetY: CGFloat
+        ) {
+            guard state.enablesPreHandoffCollapseLock else { return }
+            guard !state.scrollDisabled else { return }
+            guard !state.scrollDrivenPaneActive else { return }
+            guard state.lockedContentOffsetY == nil else { return }
+            guard let startOffsetY = state.panGestureStartContentOffsetY else { return }
+
+            let recognizer = panGestureRecognizer ?? scrollView.panGestureRecognizer
+            guard recognizer.state == .changed else { return }
+
+            let translationY = recognizer.translation(in: scrollView).y
+            let normalizedTranslation = translationY * state.preHandoffCollapseDirection
+            guard normalizedTranslation > 0 else { return }
+
+            guard isAtPreHandoffCollapseEdge(
+                scrollView: scrollView,
+                state: state,
+                offsetY: startOffsetY
+            ) else {
+                return
+            }
+
+            let clampedOffsetY = startOffsetY.clamped(to: minOffsetY...maxOffsetY)
+            state.pendingCollapsedAnchorStartOffsetY = clampedOffsetY
+            state.lockedContentOffsetY = clampedOffsetY
         }
 
         private func syncPreHandoffScrollConfiguration() {
@@ -2042,12 +2081,12 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
                     .onChange(of: scrollState.scrollDrivenPaneActive, initial: false) { _, isActive in
                         guard isActive else { return }
                         beginScrollDrivenPaneInteraction()
-                        dragTranslation = max(0, scrollState.scrollDrivenPaneTranslation)
+                        dragTranslation = max(0, scrollState.scrollDrivenPaneTranslation - paneCaptureStartTranslation)
                     }
                     .onChange(of: scrollState.scrollDrivenPaneTranslation, initial: false) { _, translation in
                         guard scrollState.scrollDrivenPaneActive else { return }
                         beginScrollDrivenPaneInteraction()
-                        dragTranslation = max(0, translation)
+                        dragTranslation = max(0, translation - paneCaptureStartTranslation)
                     }
                     .onChange(of: scrollState.scrollDrivenPaneReleaseToken, initial: false) { _, _ in
                         guard scrollState.scrollDrivenPaneActive else { return }
@@ -2230,7 +2269,7 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
 
         dragMode = .pane
         isDraggingPane = true
-        paneCaptureStartTranslation = 0
+        paneCaptureStartTranslation = max(0, scrollState.scrollDrivenPaneTranslation)
         activeExpansionSign = scrollDrivenPaneExpansionSign()
         didCaptureDragStart = false
         dragStartedOnIndicator = false
@@ -2243,8 +2282,9 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         maxHeight: CGFloat,
         detents: [ResolvedPaneDetent]
     ) {
-        let translation = scrollState.scrollDrivenPaneTranslation
-        let predictedTranslation = scrollState.scrollDrivenPanePredictedTranslation
+        let captureTranslation = paneCaptureStartTranslation
+        let translation = max(0, scrollState.scrollDrivenPaneTranslation - captureTranslation)
+        let predictedTranslation = scrollState.scrollDrivenPanePredictedTranslation - captureTranslation
         let expansionSign = scrollDrivenPaneExpansionSign()
 
         resetPaneDragTracking(clearScrollInteraction: false)
