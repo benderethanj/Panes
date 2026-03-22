@@ -152,12 +152,13 @@ public final class PaneScrollState: ObservableObject {
     @Published public internal(set) var contentLength: CGFloat = 0
     @Published public internal(set) var viewportLength: CGFloat = 0
     @Published public internal(set) var scrollDisabled: Bool = true
+    @Published public internal(set) var scrollDrivenPaneTranslation: CGFloat = 0
+    @Published public internal(set) var scrollDrivenPanePredictedTranslation: CGFloat = 0
+    @Published public internal(set) var scrollDrivenPaneReleaseToken: Int = 0
+    @Published public internal(set) var scrollDrivenPaneActive = false
     #if canImport(UIKit)
     weak var scrollView: UIScrollView?
     @Published public internal(set) var panGestureStartContentOffsetY: CGFloat?
-    @Published public internal(set) var frozenViewportSnapshot: UIImage?
-    @Published public internal(set) var frozenViewportSize: CGSize = .zero
-    @Published public internal(set) var frozenViewportCapturedOffsetY: CGFloat?
     @Published public internal(set) var lastLockedOffsetCorrectionDeltaY: CGFloat = 0
     @Published public internal(set) var preHandoffPanShouldBeginBlockCount: Int = 0
     @Published public internal(set) var preHandoffPanShouldBeginPassCount: Int = 0
@@ -606,23 +607,50 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
             switch recognizer.state {
             case .began:
                 state.panGestureStartContentOffsetY = scrollView.contentOffset.y
-                if state.enablesPreHandoffCollapseLock,
-                   isAtPreHandoffCollapseEdge(
-                    scrollView: scrollView,
-                    state: state,
-                    offsetY: scrollView.contentOffset.y
-                   ) {
-                    captureFrozenViewportSnapshotIfNeeded(from: scrollView, state: state)
-                }
+                state.scrollDrivenPaneTranslation = 0
+                state.scrollDrivenPanePredictedTranslation = 0
             case .changed:
                 guard state.enablesPreHandoffCollapseLock,
-                      !state.scrollDisabled,
                       let startOffsetY = state.panGestureStartContentOffsetY else {
                     return
                 }
 
                 let translationY = recognizer.translation(in: scrollView).y
-                if translationY * state.preHandoffCollapseDirection <= 0 {
+                let normalizedTranslation = translationY * state.preHandoffCollapseDirection
+                let velocityY = recognizer.velocity(in: scrollView).y
+                let predictedTranslation = normalizedTranslation + (velocityY * state.preHandoffCollapseDirection * 0.22)
+
+                if state.scrollDrivenPaneActive {
+                    let effectiveTranslation = max(0, normalizedTranslation)
+                    let inset = scrollView.adjustedContentInset
+                    let minOffsetY = -inset.top
+                    let maxOffsetY = max(
+                        minOffsetY,
+                        scrollView.contentSize.height + inset.bottom - scrollView.bounds.height
+                    )
+                    let clampedOffsetY = startOffsetY.clamped(to: minOffsetY...maxOffsetY)
+
+                    state.pendingCollapsedAnchorStartOffsetY = clampedOffsetY
+                    state.lockedContentOffsetY = clampedOffsetY
+
+                    if abs(state.scrollDrivenPaneTranslation - effectiveTranslation) > 0.01 {
+                        state.scrollDrivenPaneTranslation = effectiveTranslation
+                    }
+                    if abs(state.scrollDrivenPanePredictedTranslation - predictedTranslation) > 0.01 {
+                        state.scrollDrivenPanePredictedTranslation = predictedTranslation
+                    }
+
+                    if abs(scrollView.contentOffset.y - clampedOffsetY) > 0.5 {
+                        scrollView.setContentOffset(
+                            CGPoint(x: scrollView.contentOffset.x, y: clampedOffsetY),
+                            animated: false
+                        )
+                    }
+                    publishMetrics()
+                    return
+                }
+
+                guard normalizedTranslation > 0 else {
                     if state.lockedContentOffsetY != nil {
                         releasePreHandoffCollapseLock(from: scrollView, state: state)
                     }
@@ -634,6 +662,7 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
                     state: state,
                     offsetY: startOffsetY
                 ) else {
+                    state.preHandoffPanShouldBeginPassCount += 1
                     return
                 }
 
@@ -646,11 +675,10 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
                 let clampedOffsetY = startOffsetY.clamped(to: minOffsetY...maxOffsetY)
                 state.pendingCollapsedAnchorStartOffsetY = clampedOffsetY
                 state.lockedContentOffsetY = clampedOffsetY
-                captureFrozenViewportSnapshotIfNeeded(from: scrollView, state: state)
-
-                if scrollView.isScrollEnabled {
-                    scrollView.isScrollEnabled = false
-                }
+                state.scrollDrivenPaneActive = true
+                state.scrollDrivenPaneTranslation = normalizedTranslation
+                state.scrollDrivenPanePredictedTranslation = predictedTranslation
+                state.preHandoffPanShouldBeginBlockCount += 1
 
                 if abs(scrollView.contentOffset.y - clampedOffsetY) > 0.5 {
                     scrollView.setContentOffset(
@@ -661,10 +689,20 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
 
                 publishMetrics()
             case .ended, .cancelled, .failed:
-                state.panGestureStartContentOffsetY = nil
-                state.pendingCollapsedAnchorStartOffsetY = nil
-                if !state.scrollDisabled {
-                    releasePreHandoffCollapseLock(from: scrollView, state: state)
+                if state.scrollDrivenPaneActive {
+                    let translationY = recognizer.translation(in: scrollView).y
+                    let normalizedTranslation = translationY * state.preHandoffCollapseDirection
+                    let velocityY = recognizer.velocity(in: scrollView).y
+                    let predictedTranslation = normalizedTranslation + (velocityY * state.preHandoffCollapseDirection * 0.22)
+                    state.scrollDrivenPaneTranslation = max(0, normalizedTranslation)
+                    state.scrollDrivenPanePredictedTranslation = predictedTranslation
+                    state.scrollDrivenPaneReleaseToken += 1
+                } else {
+                    state.panGestureStartContentOffsetY = nil
+                    state.pendingCollapsedAnchorStartOffsetY = nil
+                    if !state.scrollDisabled {
+                        releasePreHandoffCollapseLock(from: scrollView, state: state)
+                    }
                 }
             default:
                 break
@@ -690,38 +728,14 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
             return bottomEdgeDistance <= state.preHandoffEdgeTolerance
         }
 
-        private func captureFrozenViewportSnapshotIfNeeded(from scrollView: UIScrollView, state: PaneScrollState) {
-            guard state.frozenViewportSnapshot == nil else { return }
-
-            let bounds = scrollView.bounds.integral
-            guard bounds.width > 0.5, bounds.height > 0.5 else { return }
-
-            let rendererFormat = UIGraphicsImageRendererFormat()
-            rendererFormat.scale = scrollView.window?.screen.scale ?? UIScreen.main.scale
-            rendererFormat.opaque = false
-            let renderer = UIGraphicsImageRenderer(bounds: bounds, format: rendererFormat)
-            let image = renderer.image { rendererContext in
-                if !scrollView.drawHierarchy(in: bounds, afterScreenUpdates: false) {
-                    scrollView.layer.render(in: rendererContext.cgContext)
-                }
-            }
-
-            state.frozenViewportCapturedOffsetY = scrollView.contentOffset.y
-            state.frozenViewportSize = bounds.size
-            state.frozenViewportSnapshot = image
-        }
-
         private func releasePreHandoffCollapseLock(from scrollView: UIScrollView, state: PaneScrollState) {
-            state.frozenViewportSnapshot = nil
-            state.frozenViewportSize = .zero
-            state.frozenViewportCapturedOffsetY = nil
             state.pendingCollapsedAnchorStartOffsetY = nil
             state.lockedContentOffsetY = nil
             state.lastLockedOffsetCorrectionDeltaY = 0
-
-            if !scrollView.isScrollEnabled {
-                scrollView.isScrollEnabled = true
-            }
+            state.scrollDrivenPaneTranslation = 0
+            state.scrollDrivenPanePredictedTranslation = 0
+            state.scrollDrivenPaneActive = false
+            state.panGestureStartContentOffsetY = nil
         }
 
         private func syncPreHandoffScrollConfiguration() {
@@ -840,7 +854,6 @@ public struct PaneScrollView<Content: View>: View {
     @State private var cachedCollapsedAnchorOffsetY: CGFloat?
     @State private var lastObservedCollapsedAnchorTargetOffsetY: CGFloat?
     @State private var hasPinnedCollapsedAnchorForCurrentTag = false
-    @State private var interactiveVisualContentOffsetY: CGFloat = 0
     @State private var anchorMetricsVersion = 0
     @State private var viewportMetricsVersion = 0
     @State private var interactiveAnchorCaptureAnchorMetricsVersion: Int?
@@ -869,163 +882,157 @@ public struct PaneScrollView<Content: View>: View {
 
     public var body: some View {
         ScrollViewReader { proxy in
-            ZStack(alignment: .topLeading) {
-                ScrollView(.vertical) {
-                    VStack(spacing: 0) {
-                        #if canImport(UIKit)
-                        PaneUIKitScrollMetricsBridge(state: state)
-                            .frame(width: 0, height: 0)
-                            .allowsHitTesting(false)
-                        #endif
+            ScrollView(.vertical) {
+                VStack(spacing: 0) {
+                    #if canImport(UIKit)
+                    PaneUIKitScrollMetricsBridge(state: state)
+                        .frame(width: 0, height: 0)
+                        .allowsHitTesting(false)
+                    #endif
 
-                        GeometryReader { proxy in
-                            Color.clear
-                                .frame(height: 0)
-                                .id(paneTopSentinelID)
-                                .preference(
-                                    key: PaneScrollOffsetKey.self,
-                                    value: proxy.frame(in: .global).minY
-                                )
-                        }
-                        .frame(height: 0)
-
-                        content()
-                            .environment(\.paneScrollContentSpaceID, contentSpaceID)
-                            .paneScrollTargetLayout(isEnabled: scrollSnapBehavior != .none)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                            .padding(.top, paneScrollChrome.indicatorInsets.top)
-                            .padding(.leading, paneScrollChrome.indicatorInsets.leading)
-                            .padding(.bottom, paneScrollChrome.indicatorInsets.bottom)
-                            .padding(.trailing, paneScrollChrome.indicatorInsets.trailing)
-
-                        GeometryReader { proxy in
-                            Color.clear
-                                .frame(height: 0)
-                                .preference(
-                                    key: PaneScrollBottomMarkerMaxYKey.self,
-                                    value: proxy.frame(in: .global).maxY
-                                )
-                        }
-                        .frame(height: 0)
-                    }
-                    .coordinateSpace(name: contentSpaceID)
-                    .offset(y: resolvedInteractiveVisualContentOffsetY())
-                    .background {
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: PaneScrollContentLengthKey.self,
-                                value: proxy.size.height
+                    GeometryReader { proxy in
+                        Color.clear
+                            .frame(height: 0)
+                            .id(paneTopSentinelID)
+                            .preference(
+                                key: PaneScrollOffsetKey.self,
+                                value: proxy.frame(in: .global).minY
                             )
-                        }
                     }
+                    .frame(height: 0)
+
+                    content()
+                        .environment(\.paneScrollContentSpaceID, contentSpaceID)
+                        .paneScrollTargetLayout(isEnabled: scrollSnapBehavior != .none)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(.top, paneScrollChrome.indicatorInsets.top)
+                        .padding(.leading, paneScrollChrome.indicatorInsets.leading)
+                        .padding(.bottom, paneScrollChrome.indicatorInsets.bottom)
+                        .padding(.trailing, paneScrollChrome.indicatorInsets.trailing)
+
+                    GeometryReader { proxy in
+                        Color.clear
+                            .frame(height: 0)
+                            .preference(
+                                key: PaneScrollBottomMarkerMaxYKey.self,
+                                value: proxy.frame(in: .global).maxY
+                            )
+                    }
+                    .frame(height: 0)
                 }
-                .coordinateSpace(name: scrollSpaceID)
-                .opacity(isFrozenViewportSnapshotActive ? 0 : 1)
-                .onPreferenceChange(PaneAnchorFrameKey.self) { anchorFrames in
-                    handleAnchorMetricsChange(anchorFrames.values, using: proxy)
-                }
+                .coordinateSpace(name: contentSpaceID)
                 .background {
                     GeometryReader { proxy in
                         Color.clear.preference(
-                            key: PaneScrollViewportLengthKey.self,
+                            key: PaneScrollContentLengthKey.self,
                             value: proxy.size.height
                         )
-                        .preference(
-                            key: PaneScrollViewportMinYKey.self,
-                            value: proxy.frame(in: .global).minY
-                        )
-                        .preference(
-                            key: PaneScrollViewportMaxYKey.self,
-                            value: proxy.frame(in: .global).maxY
-                        )
                     }
                 }
-                .scrollBounceBehavior(.basedOnSize)
-                .paneEdgeFadeMask(
-                    edge: .top,
-                    isEnabled: paneScrollChrome.indicatorInsets.top > 0.5,
-                    length: paneScrollChrome.fadeLength
-                )
-                .paneEdgeFadeMask(
-                    edge: .bottom,
-                    isEnabled: paneScrollChrome.indicatorInsets.bottom > 0.5,
-                    length: paneScrollChrome.fadeLength
-                )
-                .paneEdgeFadeMask(
-                    edge: .leading,
-                    isEnabled: paneScrollChrome.indicatorInsets.leading > 0.5,
-                    length: paneScrollChrome.fadeLength
-                )
-                .paneEdgeFadeMask(
-                    edge: .trailing,
-                    isEnabled: paneScrollChrome.indicatorInsets.trailing > 0.5,
-                    length: paneScrollChrome.fadeLength
-                )
-                .paneScrollSnapBehavior(scrollSnapBehavior)
-                .scrollDisabled(state.scrollDisabled)
-                .onPreferenceChange(PaneScrollOffsetKey.self) { topMarkerGlobalY in
-                    #if !canImport(UIKit)
-                    updateScrollOffset(topMarkerGlobalY: topMarkerGlobalY, viewportGlobalMinY: nil)
-                    #endif
-                }
-                .onPreferenceChange(PaneScrollContentLengthKey.self) { contentLength in
-                    #if !canImport(UIKit)
-                    updateScrollMetrics(contentLength: contentLength, viewportLength: nil)
-                    #endif
-                }
-                .onPreferenceChange(PaneScrollViewportLengthKey.self) { viewportLength in
-                    #if canImport(UIKit)
-                    updateViewportMetrics(length: viewportLength)
-                    #else
-                    updateScrollMetrics(contentLength: nil, viewportLength: viewportLength)
-                    #endif
-                }
-                .onPreferenceChange(PaneScrollViewportMinYKey.self) { viewportGlobalMinY in
-                    #if canImport(UIKit)
-                    updateViewportMetrics(minY: viewportGlobalMinY)
-                    #else
-                    updateScrollOffset(topMarkerGlobalY: nil, viewportGlobalMinY: viewportGlobalMinY)
-                    #endif
-                }
-                .onPreferenceChange(PaneScrollBottomMarkerMaxYKey.self) { bottomMarkerGlobalMaxY in
-                    #if !canImport(UIKit)
-                    updateBottomEdgeDistance(bottomMarkerGlobalMaxY: bottomMarkerGlobalMaxY, viewportGlobalMaxY: nil)
-                    #endif
-                }
-                .onPreferenceChange(PaneScrollViewportMaxYKey.self) { viewportGlobalMaxY in
-                    #if canImport(UIKit)
-                    updateViewportMetrics(maxY: viewportGlobalMaxY)
-                    #else
-                    updateBottomEdgeDistance(bottomMarkerGlobalMaxY: nil, viewportGlobalMaxY: viewportGlobalMaxY)
-                    #endif
-                }
-                .onChange(of: state.scrollDisabled, initial: true) { _, disabled in
-                    if disabled {
-                        pinCollapsedAnchorIfNeeded(using: proxy)
-                    }
-                }
-                .onChange(of: paneInteractiveAnchorProgress, initial: true) { oldProgress, newProgress in
-                    pinCollapsedAnchorInteractivelyIfNeeded(
-                        from: oldProgress,
-                        to: newProgress,
-                        using: proxy
+            }
+            .coordinateSpace(name: scrollSpaceID)
+            .onPreferenceChange(PaneAnchorFrameKey.self) { anchorFrames in
+                handleAnchorMetricsChange(anchorFrames.values, using: proxy)
+            }
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: PaneScrollViewportLengthKey.self,
+                        value: proxy.size.height
+                    )
+                    .preference(
+                        key: PaneScrollViewportMinYKey.self,
+                        value: proxy.frame(in: .global).minY
+                    )
+                    .preference(
+                        key: PaneScrollViewportMaxYKey.self,
+                        value: proxy.frame(in: .global).maxY
                     )
                 }
-                .onChange(of: shouldPinCollapsedScrollAnchor, initial: true) { _, shouldPin in
-                    guard shouldPin else {
-                        hasPinnedCollapsedAnchorForCurrentTag = false
-                        lastObservedCollapsedAnchorTargetOffsetY = nil
-                        return
-                    }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .paneEdgeFadeMask(
+                edge: .top,
+                isEnabled: paneScrollChrome.indicatorInsets.top > 0.5,
+                length: paneScrollChrome.fadeLength
+            )
+            .paneEdgeFadeMask(
+                edge: .bottom,
+                isEnabled: paneScrollChrome.indicatorInsets.bottom > 0.5,
+                length: paneScrollChrome.fadeLength
+            )
+            .paneEdgeFadeMask(
+                edge: .leading,
+                isEnabled: paneScrollChrome.indicatorInsets.leading > 0.5,
+                length: paneScrollChrome.fadeLength
+            )
+            .paneEdgeFadeMask(
+                edge: .trailing,
+                isEnabled: paneScrollChrome.indicatorInsets.trailing > 0.5,
+                length: paneScrollChrome.fadeLength
+            )
+            .paneScrollSnapBehavior(scrollSnapBehavior)
+            .scrollDisabled(state.scrollDisabled)
+            .onPreferenceChange(PaneScrollOffsetKey.self) { topMarkerGlobalY in
+                #if !canImport(UIKit)
+                updateScrollOffset(topMarkerGlobalY: topMarkerGlobalY, viewportGlobalMinY: nil)
+                #endif
+            }
+            .onPreferenceChange(PaneScrollContentLengthKey.self) { contentLength in
+                #if !canImport(UIKit)
+                updateScrollMetrics(contentLength: contentLength, viewportLength: nil)
+                #endif
+            }
+            .onPreferenceChange(PaneScrollViewportLengthKey.self) { viewportLength in
+                #if canImport(UIKit)
+                updateViewportMetrics(length: viewportLength)
+                #else
+                updateScrollMetrics(contentLength: nil, viewportLength: viewportLength)
+                #endif
+            }
+            .onPreferenceChange(PaneScrollViewportMinYKey.self) { viewportGlobalMinY in
+                #if canImport(UIKit)
+                updateViewportMetrics(minY: viewportGlobalMinY)
+                #else
+                updateScrollOffset(topMarkerGlobalY: nil, viewportGlobalMinY: viewportGlobalMinY)
+                #endif
+            }
+            .onPreferenceChange(PaneScrollBottomMarkerMaxYKey.self) { bottomMarkerGlobalMaxY in
+                #if !canImport(UIKit)
+                updateBottomEdgeDistance(bottomMarkerGlobalMaxY: bottomMarkerGlobalMaxY, viewportGlobalMaxY: nil)
+                #endif
+            }
+            .onPreferenceChange(PaneScrollViewportMaxYKey.self) { viewportGlobalMaxY in
+                #if canImport(UIKit)
+                updateViewportMetrics(maxY: viewportGlobalMaxY)
+                #else
+                updateBottomEdgeDistance(bottomMarkerGlobalMaxY: nil, viewportGlobalMaxY: viewportGlobalMaxY)
+                #endif
+            }
+            .onChange(of: state.scrollDisabled, initial: true) { _, disabled in
+                if disabled {
                     pinCollapsedAnchorIfNeeded(using: proxy)
                 }
-                .onChange(of: collapsedScrollAnchorTag, initial: false) { _, _ in
+            }
+            .onChange(of: paneInteractiveAnchorProgress, initial: true) { oldProgress, newProgress in
+                pinCollapsedAnchorInteractivelyIfNeeded(
+                    from: oldProgress,
+                    to: newProgress,
+                    using: proxy
+                )
+            }
+            .onChange(of: shouldPinCollapsedScrollAnchor, initial: true) { _, shouldPin in
+                guard shouldPin else {
                     hasPinnedCollapsedAnchorForCurrentTag = false
                     lastObservedCollapsedAnchorTargetOffsetY = nil
-                    pinCollapsedAnchorIfNeeded(using: proxy)
+                    return
                 }
-
-                frozenViewportSnapshotOverlay()
+                pinCollapsedAnchorIfNeeded(using: proxy)
+            }
+            .onChange(of: collapsedScrollAnchorTag, initial: false) { _, _ in
+                hasPinnedCollapsedAnchorForCurrentTag = false
+                lastObservedCollapsedAnchorTargetOffsetY = nil
+                pinCollapsedAnchorIfNeeded(using: proxy)
             }
         }
     }
@@ -1119,11 +1126,7 @@ public struct PaneScrollView<Content: View>: View {
         interactiveAnchorCaptureFailed = false
         interactiveAnchorCaptureAnchorMetricsVersion = nil
         interactiveAnchorCaptureViewportMetricsVersion = nil
-        interactiveVisualContentOffsetY = 0
         #if canImport(UIKit)
-        state.frozenViewportSnapshot = nil
-        state.frozenViewportSize = .zero
-        state.frozenViewportCapturedOffsetY = nil
         state.panGestureStartContentOffsetY = nil
         state.pendingCollapsedAnchorStartOffsetY = nil
         state.lockedContentOffsetY = nil
@@ -1276,36 +1279,6 @@ public struct PaneScrollView<Content: View>: View {
         return cachedCollapsedAnchorOffsetY != nil
     }
 
-    private var isFrozenViewportSnapshotActive: Bool {
-        #if canImport(UIKit)
-        state.frozenViewportSnapshot != nil &&
-            state.lockedContentOffsetY != nil &&
-            state.frozenViewportSize.width > 0.5 &&
-            state.frozenViewportSize.height > 0.5
-        #else
-        false
-        #endif
-    }
-
-    @ViewBuilder
-    private func frozenViewportSnapshotOverlay() -> some View {
-        #if canImport(UIKit)
-        if let snapshot = state.frozenViewportSnapshot,
-           isFrozenViewportSnapshotActive {
-            Image(uiImage: snapshot)
-                .resizable()
-                .frame(
-                    width: state.frozenViewportSize.width,
-                    height: state.frozenViewportSize.height,
-                    alignment: .topLeading
-                )
-                .offset(y: frozenViewportSnapshotOffsetY())
-                .allowsHitTesting(false)
-                .clipped()
-        }
-        #endif
-    }
-
     private func resolvedInteractiveStartContentOffsetY() -> CGFloat? {
         #if canImport(UIKit)
         guard let scrollView = state.scrollView else { return nil }
@@ -1316,61 +1289,6 @@ public struct PaneScrollView<Content: View>: View {
             ?? scrollView.contentOffset.y
         #else
         return nil
-        #endif
-    }
-
-    private func resolvedInteractiveDisplayedContentOffsetY() -> CGFloat? {
-        #if canImport(UIKit)
-        guard let startOffset = resolvedInteractiveStartContentOffsetY() else { return nil }
-        guard let scrollView = state.scrollView else { return nil }
-
-        guard !shouldPinCollapsedScrollAnchor,
-              let collapsedScrollAnchorTag,
-              paneInteractiveAnchorProgress > 0.001 else {
-            return startOffset
-        }
-
-        let targetOffset = interactiveAnchorTargetOffset
-            ?? cachedCollapsedAnchorOffsetY
-            ?? collapsedAnchorOffsetY(for: collapsedScrollAnchorTag, in: scrollView)
-
-        guard let targetOffset else { return startOffset }
-        guard abs(targetOffset - startOffset) > 0.5 else { return startOffset }
-
-        let easedProgress = easeInOut(paneInteractiveAnchorProgress.clamped(to: 0...1))
-        let inset = scrollView.adjustedContentInset
-        let minOffsetY = -inset.top
-        let maxOffsetY = max(
-            minOffsetY,
-            scrollView.contentSize.height + inset.bottom - scrollView.bounds.height
-        )
-
-        return (startOffset + ((targetOffset - startOffset) * easedProgress))
-            .clamped(to: minOffsetY...maxOffsetY)
-        #else
-        return nil
-        #endif
-    }
-
-    private func frozenViewportSnapshotOffsetY() -> CGFloat {
-        #if canImport(UIKit)
-        guard let capturedOffsetY = state.frozenViewportCapturedOffsetY else { return 0 }
-        let displayedOffsetY = resolvedInteractiveDisplayedContentOffsetY() ?? capturedOffsetY
-        return capturedOffsetY - displayedOffsetY
-        #else
-        return 0
-        #endif
-    }
-
-    private func resolvedInteractiveVisualContentOffsetY() -> CGFloat {
-        #if canImport(UIKit)
-        guard let startOffset = resolvedInteractiveStartContentOffsetY(),
-              let displayedOffset = resolvedInteractiveDisplayedContentOffsetY() else {
-            return interactiveVisualContentOffsetY
-        }
-        return -(displayedOffset - startOffset)
-        #else
-        return interactiveVisualContentOffsetY
         #endif
     }
 
@@ -1422,8 +1340,13 @@ public struct PaneScrollView<Content: View>: View {
             )
             let clampedOffset = interpolatedOffset.clamped(to: minOffsetY...maxOffsetY)
 
-            state.lockedContentOffsetY = startOffset
-            interactiveVisualContentOffsetY = -(clampedOffset - startOffset)
+            state.lockedContentOffsetY = clampedOffset
+            if abs(scrollView.contentOffset.y - clampedOffset) > 0.5 {
+                scrollView.setContentOffset(
+                    CGPoint(x: scrollView.contentOffset.x, y: clampedOffset),
+                    animated: false
+                )
+            }
             return
         }
         #endif
@@ -1452,15 +1375,10 @@ public struct PaneScrollView<Content: View>: View {
             )
             let clampedOffset = targetOffset.clamped(to: minOffsetY...maxOffsetY)
             cachedCollapsedAnchorOffsetY = clampedOffset
-            let wasUsingVisualOffset = abs(interactiveVisualContentOffsetY) > 0.5
-            interactiveVisualContentOffsetY = 0
-            state.frozenViewportSnapshot = nil
-            state.frozenViewportSize = .zero
-            state.frozenViewportCapturedOffsetY = nil
             state.lockedContentOffsetY = nil
             scrollView.setContentOffset(
                 CGPoint(x: scrollView.contentOffset.x, y: clampedOffset),
-                animated: animated && !wasUsingVisualOffset
+                animated: animated
             )
             return
         }
@@ -2121,6 +2039,25 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
                             scrollUnlockToken += 1
                         }
                     }
+                    .onChange(of: scrollState.scrollDrivenPaneActive, initial: false) { _, isActive in
+                        guard isActive else { return }
+                        beginScrollDrivenPaneInteraction()
+                        dragTranslation = max(0, scrollState.scrollDrivenPaneTranslation)
+                    }
+                    .onChange(of: scrollState.scrollDrivenPaneTranslation, initial: false) { _, translation in
+                        guard scrollState.scrollDrivenPaneActive else { return }
+                        beginScrollDrivenPaneInteraction()
+                        dragTranslation = max(0, translation)
+                    }
+                    .onChange(of: scrollState.scrollDrivenPaneReleaseToken, initial: false) { _, _ in
+                        guard scrollState.scrollDrivenPaneActive else { return }
+                        completeScrollDrivenPaneInteraction(
+                            selectedHeight: selectedHeight,
+                            minHeight: minHeight,
+                            maxHeight: maxHeight,
+                            detents: detents
+                        )
+                    }
                 }
                 
                 .ignoresSafeArea()
@@ -2136,6 +2073,10 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
     ) -> some Gesture {
         DragGesture(minimumDistance: 1, coordinateSpace: .global)
             .onChanged { value in
+                if scrollState.scrollDrivenPaneActive {
+                    return
+                }
+
                 let axisTranslation = primaryAxisTranslation(from: value.translation)
 
                 if dragMode == nil {
@@ -2154,6 +2095,14 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
                             bottomEdgeDistance: scrollState.bottomEdgeDistance
                         )
                         didCaptureDragStart = true
+                    }
+
+                    if shouldRouteExpandedContentDragThroughScrollView(
+                        selectedHeight: selectedHeight,
+                        maxHeight: maxHeight,
+                        startedOnIndicator: dragStartedOnIndicator
+                    ) {
+                        return
                     }
 
                     let normalizedTranslation = normalizedPaneTranslation(
@@ -2222,21 +2171,27 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
                 setScrollDisabled(true)
             }
             .onEnded { value in
+                if scrollState.scrollDrivenPaneActive {
+                    return
+                }
+
+                let shouldResetDeferredTracking =
+                    shouldRouteExpandedContentDragThroughScrollView(
+                        selectedHeight: selectedHeight,
+                        maxHeight: maxHeight,
+                        startedOnIndicator: dragStartedOnIndicator
+                    ) &&
+                    dragMode == nil
+
+                if shouldResetDeferredTracking {
+                    resetPaneDragTracking(clearScrollInteraction: false)
+                    return
+                }
+
                 let captureStartTranslation = paneCaptureStartTranslation
                 let endingMode = dragMode
-                isDraggingPane = false
-                dragMode = nil
-                paneCaptureStartTranslation = 0
                 let expansionSign = activeExpansionSign
-                activeExpansionSign = 1
-                didCaptureDragStart = false
-                dragStartedOnIndicator = false
-                dragStartedAtCollapseEdge = false
-                #if canImport(UIKit)
-                scrollState.panGestureStartContentOffsetY = nil
-                scrollState.pendingCollapsedAnchorStartOffsetY = nil
-                scrollState.lockedContentOffsetY = nil
-                #endif
+                resetPaneDragTracking(clearScrollInteraction: true)
 
                 guard endingMode == .pane else {
                     withAnimation(options.animation) {
@@ -2258,45 +2213,153 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
                     axisTranslation: primaryAxisTranslation(from: value.predictedEndTranslation),
                     expansionSign: expansionSign
                 ) - captureStartTranslation
-                let releaseVelocity = estimatedReleaseVelocity(
+                finishPaneDragRelease(
                     translation: translation,
-                    predictedTranslation: predictedTranslation
-                )
-                let rawCurrentHeight = selectedHeight - translation
-                let currentHeight = paneHeight(
-                    forSelectedHeight: selectedHeight,
-                    dragTranslation: translation,
+                    predictedTranslation: predictedTranslation,
+                    selectedHeight: selectedHeight,
                     minHeight: minHeight,
-                    maxHeight: maxHeight
-                )
-
-                if options.allowsSwipeToDismiss, rawCurrentHeight < (minHeight * options.dismissThresholdMultiplier) {
-                    beginDragDismiss(
-                        translation: translation,
-                        expansionSign: expansionSign
-                    )
-                    return
-                }
-
-                let velocityAdjustedHeight = (currentHeight - (releaseVelocity * velocityHeightInfluenceSeconds))
-                    .clamped(to: minHeight...maxHeight)
-
-                let target = snapTarget(
-                    projectedHeight: velocityAdjustedHeight,
-                    startingHeight: selectedHeight,
-                    releaseVelocity: releaseVelocity,
-                    in: detents
-                )
-                withAnimation(options.animation) {
-                    dragTranslation = 0
-                    selectedDetent = target.detent
-                }
-                updateScrollInteractivity(
-                    forTargetHeight: target.height,
-                    fromCurrentHeight: currentHeight,
-                    maxHeight: maxHeight
+                    maxHeight: maxHeight,
+                    detents: detents,
+                    expansionSign: expansionSign
                 )
             }
+    }
+
+    private func beginScrollDrivenPaneInteraction() {
+        guard dragMode != .pane || !isDraggingPane else { return }
+
+        dragMode = .pane
+        isDraggingPane = true
+        paneCaptureStartTranslation = 0
+        activeExpansionSign = scrollDrivenPaneExpansionSign()
+        didCaptureDragStart = false
+        dragStartedOnIndicator = false
+        dragStartedAtCollapseEdge = true
+    }
+
+    private func completeScrollDrivenPaneInteraction(
+        selectedHeight: CGFloat,
+        minHeight: CGFloat,
+        maxHeight: CGFloat,
+        detents: [ResolvedPaneDetent]
+    ) {
+        let translation = scrollState.scrollDrivenPaneTranslation
+        let predictedTranslation = scrollState.scrollDrivenPanePredictedTranslation
+        let expansionSign = scrollDrivenPaneExpansionSign()
+
+        resetPaneDragTracking(clearScrollInteraction: false)
+        finishPaneDragRelease(
+            translation: translation,
+            predictedTranslation: predictedTranslation,
+            selectedHeight: selectedHeight,
+            minHeight: minHeight,
+            maxHeight: maxHeight,
+            detents: detents,
+            expansionSign: expansionSign
+        )
+        resetScrollDrivenPaneInteraction()
+    }
+
+    private func finishPaneDragRelease(
+        translation: CGFloat,
+        predictedTranslation: CGFloat,
+        selectedHeight: CGFloat,
+        minHeight: CGFloat,
+        maxHeight: CGFloat,
+        detents: [ResolvedPaneDetent],
+        expansionSign: CGFloat
+    ) {
+        let releaseVelocity = estimatedReleaseVelocity(
+            translation: translation,
+            predictedTranslation: predictedTranslation
+        )
+        let rawCurrentHeight = selectedHeight - translation
+        let currentHeight = paneHeight(
+            forSelectedHeight: selectedHeight,
+            dragTranslation: translation,
+            minHeight: minHeight,
+            maxHeight: maxHeight
+        )
+
+        if options.allowsSwipeToDismiss, rawCurrentHeight < (minHeight * options.dismissThresholdMultiplier) {
+            beginDragDismiss(
+                translation: translation,
+                expansionSign: expansionSign
+            )
+            return
+        }
+
+        let velocityAdjustedHeight = (currentHeight - (releaseVelocity * velocityHeightInfluenceSeconds))
+            .clamped(to: minHeight...maxHeight)
+
+        let target = snapTarget(
+            projectedHeight: velocityAdjustedHeight,
+            startingHeight: selectedHeight,
+            releaseVelocity: releaseVelocity,
+            in: detents
+        )
+        withAnimation(options.animation) {
+            dragTranslation = 0
+            selectedDetent = target.detent
+        }
+        updateScrollInteractivity(
+            forTargetHeight: target.height,
+            fromCurrentHeight: currentHeight,
+            maxHeight: maxHeight
+        )
+    }
+
+    private func shouldRouteExpandedContentDragThroughScrollView(
+        selectedHeight: CGFloat,
+        maxHeight: CGFloat,
+        startedOnIndicator: Bool
+    ) -> Bool {
+        guard options.expansionAxis == .vertical else { return false }
+        guard options.keepsCollapsedScrollAnchorPinned else { return false }
+        guard options.collapsedScrollAnchorTag != nil else { return false }
+        guard isAtMax(currentHeight: selectedHeight, maxHeight: maxHeight) else { return false }
+        #if canImport(UIKit)
+        guard scrollState.scrollView != nil else { return false }
+        return !startedOnIndicator
+        #else
+        _ = startedOnIndicator
+        return false
+        #endif
+    }
+
+    private func scrollDrivenPaneExpansionSign() -> CGFloat {
+        switch verticalAnchorSide(for: options.anchor) {
+        case .top:
+            return 1
+        case .bottom:
+            return -1
+        case .center:
+            return 1
+        }
+    }
+
+    private func resetPaneDragTracking(clearScrollInteraction: Bool) {
+        isDraggingPane = false
+        dragMode = nil
+        paneCaptureStartTranslation = 0
+        activeExpansionSign = 1
+        didCaptureDragStart = false
+        dragStartedOnIndicator = false
+        dragStartedAtCollapseEdge = false
+
+        guard clearScrollInteraction else { return }
+        resetScrollDrivenPaneInteraction()
+    }
+
+    private func resetScrollDrivenPaneInteraction() {
+        #if canImport(UIKit)
+        scrollState.panGestureStartContentOffsetY = nil
+        scrollState.pendingCollapsedAnchorStartOffsetY = nil
+        scrollState.lockedContentOffsetY = nil
+        scrollState.scrollDrivenPaneTranslation = 0
+        scrollState.scrollDrivenPanePredictedTranslation = 0
+        scrollState.scrollDrivenPaneActive = false
+        #endif
     }
 
     @ViewBuilder
@@ -3239,7 +3302,6 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         guard options.collapsedScrollAnchorTag != nil else { return }
         guard isAtMax(currentHeight: selectedHeight, maxHeight: maxHeight) else { return }
         guard let scrollView = scrollState.scrollView else { return }
-        captureFrozenScrollViewportIfNeeded(from: scrollView)
         let desiredOffsetY = scrollState.pendingCollapsedAnchorStartOffsetY
             ?? scrollState.panGestureStartContentOffsetY
             ?? scrollView.contentOffset.y
@@ -3298,9 +3360,6 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         paneCaptureStartTranslation = 0
         activeExpansionSign = 1
         #if canImport(UIKit)
-        scrollState.frozenViewportSnapshot = nil
-        scrollState.frozenViewportSize = .zero
-        scrollState.frozenViewportCapturedOffsetY = nil
         scrollState.panGestureStartContentOffsetY = nil
         scrollState.pendingCollapsedAnchorStartOffsetY = nil
         scrollState.lockedContentOffsetY = nil
@@ -3337,9 +3396,6 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
             dismissSlideOffset = 0
         }
         #if canImport(UIKit)
-        scrollState.frozenViewportSnapshot = nil
-        scrollState.frozenViewportSize = .zero
-        scrollState.frozenViewportCapturedOffsetY = nil
         scrollState.panGestureStartContentOffsetY = nil
         scrollState.pendingCollapsedAnchorStartOffsetY = nil
         scrollState.lockedContentOffsetY = nil
@@ -3393,27 +3449,6 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
     }
 
     #if canImport(UIKit)
-    private func captureFrozenScrollViewportIfNeeded(from scrollView: UIScrollView) {
-        guard scrollState.frozenViewportSnapshot == nil else { return }
-
-        let bounds = scrollView.bounds.integral
-        guard bounds.width > 0.5, bounds.height > 0.5 else { return }
-
-        let rendererFormat = UIGraphicsImageRendererFormat()
-        rendererFormat.scale = scrollView.window?.screen.scale ?? UIScreen.main.scale
-        rendererFormat.opaque = false
-        let renderer = UIGraphicsImageRenderer(bounds: bounds, format: rendererFormat)
-        let image = renderer.image { rendererContext in
-            if !scrollView.drawHierarchy(in: bounds, afterScreenUpdates: false) {
-                scrollView.layer.render(in: rendererContext.cgContext)
-            }
-        }
-
-        scrollState.frozenViewportCapturedOffsetY = scrollView.contentOffset.y
-        scrollState.frozenViewportSize = bounds.size
-        scrollState.frozenViewportSnapshot = image
-    }
-
     private func cancelActiveScrollPanIfNeeded(_ scrollView: UIScrollView) {
         let panGestureRecognizer = scrollView.panGestureRecognizer
         guard panGestureRecognizer.state == .began || panGestureRecognizer.state == .changed else { return }
