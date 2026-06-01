@@ -1431,17 +1431,13 @@ public struct PaneScrollView<Content: View>: View {
             proxy.scrollTo(tag, anchor: collapsedScrollAnchor)
         }
 
+        #if canImport(UIKit)
         DispatchQueue.main.async { @MainActor in
-            withTransaction(transaction) {
-                proxy.scrollTo(tag, anchor: collapsedScrollAnchor)
-            }
-
-            #if canImport(UIKit)
             if let scrollView = state.scrollView {
                 cachedCollapsedAnchorOffsetY = scrollView.contentOffset.y
             }
-            #endif
         }
+        #endif
     }
 
     private func easeInOut(_ progress: CGFloat) -> CGFloat {
