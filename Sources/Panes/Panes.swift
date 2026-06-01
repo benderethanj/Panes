@@ -488,7 +488,7 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
                     self.publishMetrics()
                 }
             } else {
-                DispatchQueue.main.async { [weak self] in
+                DispatchQueue.main.async { @MainActor [weak self] in
                     self?.publishMetrics()
                 }
             }
@@ -852,7 +852,7 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
-            DispatchQueue.main.async { [weak self] in
+            DispatchQueue.main.async { @MainActor [weak self] in
                 guard let self else { return }
                 onLayoutOrAttach?(self)
             }
@@ -1085,7 +1085,7 @@ public struct PaneScrollView<Content: View>: View {
         if canResolveCollapsedAnchorOffset(for: collapsedScrollAnchorTag) {
             hasPinnedCollapsedAnchorForCurrentTag = true
         }
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { @MainActor in
             scrollToCollapsedAnchor(
                 using: proxy,
                 tag: collapsedScrollAnchorTag,
@@ -1148,7 +1148,7 @@ public struct PaneScrollView<Content: View>: View {
         )
 
         if clampedNew >= 0.995 {
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { @MainActor in
                 scrollToCollapsedAnchor(
                     using: proxy,
                     tag: collapsedScrollAnchorTag,
@@ -1282,7 +1282,7 @@ public struct PaneScrollView<Content: View>: View {
 
         if !hasPinnedCollapsedAnchorForCurrentTag {
             hasPinnedCollapsedAnchorForCurrentTag = canResolveCollapsedAnchorOffset(for: collapsedScrollAnchorTag)
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { @MainActor in
                 scrollToCollapsedAnchor(
                     using: proxy,
                     tag: collapsedScrollAnchorTag,
@@ -1293,7 +1293,7 @@ public struct PaneScrollView<Content: View>: View {
                   let resolvedTargetOffsetY,
                   let previousTargetOffsetY = lastObservedCollapsedAnchorTargetOffsetY,
                   abs(previousTargetOffsetY - resolvedTargetOffsetY) > 0.5 {
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { @MainActor in
                 scrollToCollapsedAnchor(
                     using: proxy,
                     tag: collapsedScrollAnchorTag,
@@ -1391,7 +1391,7 @@ public struct PaneScrollView<Content: View>: View {
         #endif
 
         let duration = 0.06 + (0.16 * Double(clampedProgress))
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { @MainActor in
             withAnimation(.easeInOut(duration: duration)) {
                 scrollToCollapsedAnchor(using: proxy, tag: tag, animated: true)
             }
@@ -1431,7 +1431,7 @@ public struct PaneScrollView<Content: View>: View {
             proxy.scrollTo(tag, anchor: collapsedScrollAnchor)
         }
 
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { @MainActor in
             withTransaction(transaction) {
                 proxy.scrollTo(tag, anchor: collapsedScrollAnchor)
             }
@@ -3414,7 +3414,7 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
             dismissSlideOffset = collapseAxisDirection * travel
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + dragDismissCompletionDelay) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + dragDismissCompletionDelay) { @MainActor in
             guard isDragDismissAnimating else { return }
 
             var transaction = Transaction(animation: .none)
@@ -3637,7 +3637,7 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
 
         if expandingIntoMax {
             setScrollDisabled(true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + enableScrollDelayAfterSnap) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + enableScrollDelayAfterSnap) { @MainActor in
                 guard token == scrollUnlockToken else { return }
                 guard dragMode == nil, !isDraggingPane else { return }
                 setScrollDisabled(false)
