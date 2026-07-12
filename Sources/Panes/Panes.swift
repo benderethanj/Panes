@@ -10,13 +10,15 @@ public enum PaneDetent: Hashable {
     case fraction(CGFloat)
     case height(CGFloat)
     case anchorHeight(tag: AnyHashable, offset: CGFloat)
+    case targetViewHeight(padding: CGFloat)
     case medium
     case large
 
     fileprivate func resolvedHeight(
         maxHeight: CGFloat,
         safeAreaBottom: CGFloat,
-        anchorHeights: [AnyHashable: CGFloat] = [:]
+        anchorHeights: [AnyHashable: CGFloat] = [:],
+        targetViewHeight: CGFloat? = nil
     ) -> CGFloat {
         let resolved: CGFloat
 
@@ -28,6 +30,8 @@ public enum PaneDetent: Hashable {
         case let .anchorHeight(tag, offset):
             let anchorHeight = anchorHeights[tag] ?? 0
             resolved = anchorHeight + offset + safeAreaBottom
+        case let .targetViewHeight(padding):
+            resolved = (targetViewHeight ?? 0) + padding + safeAreaBottom
         case .medium:
             resolved = maxHeight * 0.5
         case .large:
@@ -57,6 +61,44 @@ public enum PaneScrollSnapBehavior: Hashable {
     case paging
 }
 
+public struct PaneTargetView: Equatable {
+    public var tag: AnyHashable
+    public var alignment: UnitPoint
+    public var alignsWhenNotLarge: Bool
+    public var tracksWhileNotLarge: Bool
+    public var showsAlignmentIndicator: Bool
+
+    public init(
+        tag: AnyHashable,
+        alignment: UnitPoint = .top,
+        alignsWhenNotLarge: Bool = true,
+        tracksWhileNotLarge: Bool = false,
+        showsAlignmentIndicator: Bool = false
+    ) {
+        self.tag = tag
+        self.alignment = alignment
+        self.alignsWhenNotLarge = alignsWhenNotLarge
+        self.tracksWhileNotLarge = tracksWhileNotLarge
+        self.showsAlignmentIndicator = showsAlignmentIndicator
+    }
+}
+
+public struct PaneHandleInteractionZone: Equatable {
+    public var padding: EdgeInsets
+    public var systemGestureDeferralEdges: Edge.Set
+    public var systemGestureDeferralActivationDistance: CGFloat
+
+    public init(
+        padding: EdgeInsets = .init(),
+        systemGestureDeferralEdges: Edge.Set = [],
+        systemGestureDeferralActivationDistance: CGFloat = 56
+    ) {
+        self.padding = padding
+        self.systemGestureDeferralEdges = systemGestureDeferralEdges
+        self.systemGestureDeferralActivationDistance = systemGestureDeferralActivationDistance
+    }
+}
+
 public struct PaneConfig {
     public var detents: [PaneDetent] = [.large]
     public var largestUndimmedDetent: PaneDetent? = nil
@@ -73,12 +115,14 @@ public struct PaneConfig {
     public var crossAxisSize: PaneCrossAxisSize
     public var anchor: Alignment
     public var expansionAxis: PaneExpansionAxis
+    public var targetView: PaneTargetView?
     public var collapsedScrollAnchorTag: AnyHashable?
     public var collapsedScrollAnchor: UnitPoint
     public var keepsCollapsedScrollAnchorPinned: Bool
     public var tracksCollapsedScrollAnchor: Bool
     public var showsCollapsedScrollAnchorIndicator: Bool
     public var scrollSnapBehavior: PaneScrollSnapBehavior
+    public var handleInteractionZone: PaneHandleInteractionZone
     public var dragIndicatorContentInset: CGFloat
     public var dragIndicatorTouchExtension: CGFloat
     public var dragIndicatorFadeLength: CGFloat
@@ -102,12 +146,14 @@ public struct PaneConfig {
         crossAxisSize: PaneCrossAxisSize = .fill,
         anchor: Alignment = .bottom,
         expansionAxis: PaneExpansionAxis = .vertical,
+        targetView: PaneTargetView? = nil,
         collapsedScrollAnchorTag: AnyHashable? = nil,
         collapsedScrollAnchor: UnitPoint = .top,
         keepsCollapsedScrollAnchorPinned: Bool = false,
         tracksCollapsedScrollAnchor: Bool = false,
         showsCollapsedScrollAnchorIndicator: Bool = false,
         scrollSnapBehavior: PaneScrollSnapBehavior = .none,
+        handleInteractionZone: PaneHandleInteractionZone = .init(),
         dragIndicatorContentInset: CGFloat = 12,
         dragIndicatorTouchExtension: CGFloat = 0,
         dragIndicatorFadeLength: CGFloat = 24,
@@ -129,12 +175,14 @@ public struct PaneConfig {
         self.crossAxisSize = crossAxisSize
         self.anchor = anchor
         self.expansionAxis = expansionAxis
+        self.targetView = targetView
         self.collapsedScrollAnchorTag = collapsedScrollAnchorTag
         self.collapsedScrollAnchor = collapsedScrollAnchor
         self.keepsCollapsedScrollAnchorPinned = keepsCollapsedScrollAnchorPinned
         self.tracksCollapsedScrollAnchor = tracksCollapsedScrollAnchor
         self.showsCollapsedScrollAnchorIndicator = showsCollapsedScrollAnchorIndicator
         self.scrollSnapBehavior = scrollSnapBehavior
+        self.handleInteractionZone = handleInteractionZone
         self.dragIndicatorContentInset = dragIndicatorContentInset
         self.dragIndicatorTouchExtension = dragIndicatorTouchExtension
         self.dragIndicatorFadeLength = dragIndicatorFadeLength
@@ -142,6 +190,24 @@ public struct PaneConfig {
         self.systemGestureDeferralEdges = systemGestureDeferralEdges
         self.dismissThresholdMultiplier = dismissThresholdMultiplier
         self.animation = animation
+    }
+
+    fileprivate var resolvedTargetView: PaneTargetView? {
+        if let targetView {
+            return targetView
+        }
+
+        guard let collapsedScrollAnchorTag else {
+            return nil
+        }
+
+        return PaneTargetView(
+            tag: collapsedScrollAnchorTag,
+            alignment: collapsedScrollAnchor,
+            alignsWhenNotLarge: keepsCollapsedScrollAnchorPinned,
+            tracksWhileNotLarge: tracksCollapsedScrollAnchor,
+            showsAlignmentIndicator: showsCollapsedScrollAnchorIndicator
+        )
     }
 }
 
@@ -244,6 +310,13 @@ public struct PaneContext {
             }
             let sign = roundedOffset > 0 ? "+" : ""
             return "anchor\(sign)\(roundedOffset)pt"
+        case let .targetViewHeight(padding):
+            let roundedPadding = Int(padding.rounded())
+            if roundedPadding == 0 {
+                return "target"
+            }
+            let sign = roundedPadding > 0 ? "+" : ""
+            return "target\(sign)\(roundedPadding)pt"
         case let .fraction(value):
             return "\(Int((value * 100).rounded()))%"
         case let .height(value):
@@ -1071,6 +1144,8 @@ public struct PaneScrollView<Content: View>: View {
             .onChange(of: collapsedScrollAnchorTag, initial: false) { _, _ in
                 hasPinnedCollapsedAnchorForCurrentTag = false
                 lastObservedCollapsedAnchorTargetOffsetY = nil
+                cachedCollapsedAnchorOffsetY = nil
+                resetInteractiveAnchorInterpolationState()
                 pinCollapsedAnchorIfNeeded(using: proxy)
             }
         }
@@ -1082,6 +1157,7 @@ public struct PaneScrollView<Content: View>: View {
 
         resetInteractiveAnchorInterpolationState()
         lastAppliedInteractiveAnchorProgress = 1
+        let shouldAnimate = hasPinnedCollapsedAnchorForCurrentTag
         if canResolveCollapsedAnchorOffset(for: collapsedScrollAnchorTag) {
             hasPinnedCollapsedAnchorForCurrentTag = true
         }
@@ -1089,7 +1165,7 @@ public struct PaneScrollView<Content: View>: View {
             scrollToCollapsedAnchor(
                 using: proxy,
                 tag: collapsedScrollAnchorTag,
-                animated: true
+                animated: shouldAnimate
             )
         }
     }
@@ -1757,6 +1833,7 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
     @StateObject private var scrollState = PaneScrollState()
     @State private var dragTranslation: CGFloat = 0
     @State private var dismissSlideOffset: CGFloat = 0
+    @State private var dismissTargetAlignmentProgress: CGFloat = 0
     @State private var isDragDismissAnimating = false
     @State private var isDraggingPane = false
     @State private var dragMode: DragMode? = nil
@@ -1781,9 +1858,32 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
     private let strongFlingVelocityThreshold: CGFloat = 2100
     private let maxBottomOvershoot: CGFloat = 96
     private let bottomOvershootResistance: CGFloat = 0.85
-    private let systemGestureDeferralActivationDistance: CGFloat = 56
     private let dragDismissCompletionDelay: TimeInterval = 0.42
     private let dragDismissAnimationSpeed: Double = 0.8
+
+    private var targetView: PaneTargetView? {
+        options.resolvedTargetView
+    }
+
+    private var targetViewTag: AnyHashable? {
+        targetView?.tag
+    }
+
+    private var targetViewAlignsWhenNotLarge: Bool {
+        targetView?.alignsWhenNotLarge ?? false
+    }
+
+    private var effectiveSystemGestureDeferralEdges: Edge.Set {
+        options.systemGestureDeferralEdges.union(options.handleInteractionZone.systemGestureDeferralEdges)
+    }
+
+    private var effectiveSystemGestureDeferralActivationDistance: CGFloat {
+        max(0, options.handleInteractionZone.systemGestureDeferralActivationDistance)
+    }
+
+    private var shouldAnimateDismissTowardTarget: Bool {
+        targetViewAlignsWhenNotLarge && targetViewTag != nil
+    }
 
     public func body(content: Content) -> some View {
         content
@@ -1861,14 +1961,17 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
                         indicatorInsets: indicatorContentInsets,
                         fadeLength: max(0, options.dragIndicatorFadeLength)
                     )
-                    let interactiveAnchorProgress = collapsedAnchorInteractiveProgress(
-                        interactiveHeight: effectiveInteractiveHeight,
-                        minHeight: minHeight,
-                        maxHeight: maxHeight,
-                        detents: detents,
-                        isDraggingPane: isDraggingPane,
-                        dragTranslation: dragTranslation
-                    )
+                    let interactiveAnchorProgress = max(
+                        collapsedAnchorInteractiveProgress(
+                            interactiveHeight: effectiveInteractiveHeight,
+                            minHeight: minHeight,
+                            maxHeight: maxHeight,
+                            detents: detents,
+                            isDraggingPane: isDraggingPane,
+                            dragTranslation: dragTranslation
+                        ),
+                        dismissTargetAlignmentProgress
+                    ).clamped(to: 0...1)
                     let allowsPaneContentInteraction =
                         options.allowsContentInteractionWhenNotFullyExpanded ||
                         isAtMax(currentHeight: effectiveInteractiveHeight, maxHeight: maxHeight)
@@ -2055,6 +2158,7 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
                         if presented {
                             dragTranslation = 0
                             dismissSlideOffset = 0
+                            dismissTargetAlignmentProgress = 0
                             isDragDismissAnimating = false
                             isDraggingPane = false
                             dragMode = nil
@@ -2351,8 +2455,8 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         startedOnIndicator: Bool
     ) -> Bool {
         guard options.expansionAxis == .vertical else { return false }
-        guard options.keepsCollapsedScrollAnchorPinned else { return false }
-        guard options.collapsedScrollAnchorTag != nil else { return false }
+        guard targetViewAlignsWhenNotLarge else { return false }
+        guard targetViewTag != nil else { return false }
         guard isAtMax(currentHeight: selectedHeight, maxHeight: maxHeight) else { return false }
         #if canImport(UIKit)
         guard scrollState.scrollView != nil else { return false }
@@ -2510,6 +2614,7 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
             max(0, options.dragIndicatorContentInset)
         ) + max(0, options.dragIndicatorTouchExtension)
         let hitSlop: CGFloat = 4
+        let extraHitArea = options.handleInteractionZone.padding
 
         for alignment in dragIndicatorAlignments {
             let baseRect: CGRect
@@ -2546,7 +2651,11 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
                 continue
             }
 
-            if baseRect.insetBy(dx: -hitSlop, dy: -hitSlop).contains(startLocation) {
+            let interactionRect = baseRect
+                .insetBy(dx: -hitSlop, dy: -hitSlop)
+                .paneExpanded(by: extraHitArea)
+
+            if interactionRect.contains(startLocation) {
                 return true
             }
         }
@@ -2624,34 +2733,34 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         paneFrame: CGRect,
         windowFrame: CGRect
     ) -> Edge.Set {
-        guard !options.systemGestureDeferralEdges.isEmpty else { return [] }
+        guard !effectiveSystemGestureDeferralEdges.isEmpty else { return [] }
 
         var activeEdges: Edge.Set = []
 
-        if options.systemGestureDeferralEdges.contains(.top) {
+        if effectiveSystemGestureDeferralEdges.contains(.top) {
             let gap = max(0, paneFrame.minY - windowFrame.minY)
-            if gap <= systemGestureDeferralActivationDistance {
+            if gap <= effectiveSystemGestureDeferralActivationDistance {
                 activeEdges.formUnion(.top)
             }
         }
 
-        if options.systemGestureDeferralEdges.contains(.bottom) {
+        if effectiveSystemGestureDeferralEdges.contains(.bottom) {
             let gap = max(0, windowFrame.maxY - paneFrame.maxY)
-            if gap <= systemGestureDeferralActivationDistance {
+            if gap <= effectiveSystemGestureDeferralActivationDistance {
                 activeEdges.formUnion(.bottom)
             }
         }
 
-        if options.systemGestureDeferralEdges.contains(.leading) {
+        if effectiveSystemGestureDeferralEdges.contains(.leading) {
             let gap = max(0, paneFrame.minX - windowFrame.minX)
-            if gap <= systemGestureDeferralActivationDistance {
+            if gap <= effectiveSystemGestureDeferralActivationDistance {
                 activeEdges.formUnion(.leading)
             }
         }
 
-        if options.systemGestureDeferralEdges.contains(.trailing) {
+        if effectiveSystemGestureDeferralEdges.contains(.trailing) {
             let gap = max(0, windowFrame.maxX - paneFrame.maxX)
-            if gap <= systemGestureDeferralActivationDistance {
+            if gap <= effectiveSystemGestureDeferralActivationDistance {
                 activeEdges.formUnion(.trailing)
             }
         }
@@ -3078,8 +3187,8 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         isDraggingPane: Bool,
         dragTranslation: CGFloat
     ) -> CGFloat {
-        guard options.keepsCollapsedScrollAnchorPinned else { return 0 }
-        guard options.collapsedScrollAnchorTag != nil else { return 0 }
+        guard targetViewAlignsWhenNotLarge else { return 0 }
+        guard targetViewTag != nil else { return 0 }
         guard isDraggingPane else { return 0 }
         guard dragTranslation > 0 else { return 0 }
 
@@ -3106,6 +3215,7 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         anchorHeights: [AnyHashable: CGFloat]
     ) -> [ResolvedPaneDetent] {
         let detents = options.detents.isEmpty ? [PaneDetent.medium, .large] : options.detents
+        let targetViewHeight = resolvedTargetViewHeight(from: anchorHeights)
 
         let resolved = detents
             .map { detent in
@@ -3114,7 +3224,8 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
                     height: detent.resolvedHeight(
                         maxHeight: maxHeight,
                         safeAreaBottom: safeAreaBottom,
-                        anchorHeights: anchorHeights
+                        anchorHeights: anchorHeights,
+                        targetViewHeight: targetViewHeight
                     )
                 )
             }
@@ -3147,10 +3258,12 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
             return exact.height
         }
 
+        let targetViewHeight = resolvedTargetViewHeight(from: anchorHeights)
         let expected = detent.resolvedHeight(
             maxHeight: maxHeight,
             safeAreaBottom: safeAreaBottom,
-            anchorHeights: anchorHeights
+            anchorHeights: anchorHeights,
+            targetViewHeight: targetViewHeight
         )
         return nearestDetent(to: expected, in: detents).height
     }
@@ -3253,10 +3366,12 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         safeAreaBottom: CGFloat,
         anchorHeights: [AnyHashable: CGFloat]
     ) {
+        let targetViewHeight = resolvedTargetViewHeight(from: anchorHeights)
         let expected = selectedDetent.resolvedHeight(
             maxHeight: maxHeight,
             safeAreaBottom: safeAreaBottom,
-            anchorHeights: anchorHeights
+            anchorHeights: anchorHeights,
+            targetViewHeight: targetViewHeight
         )
         let nearest = nearestDetent(to: expected, in: detents)
 
@@ -3269,6 +3384,11 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
             fromCurrentHeight: nearest.height,
             maxHeight: maxHeight
         )
+    }
+
+    private func resolvedTargetViewHeight(from anchorHeights: [AnyHashable: CGFloat]) -> CGFloat? {
+        guard let targetViewTag else { return nil }
+        return anchorHeights[targetViewTag]
     }
 
     private func undimmedHeight(
@@ -3334,8 +3454,8 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
 
     private func captureCollapsedAnchorStartOffsetIfNeeded(selectedHeight: CGFloat, maxHeight: CGFloat) {
         #if canImport(UIKit)
-        guard options.keepsCollapsedScrollAnchorPinned else { return }
-        guard options.collapsedScrollAnchorTag != nil else { return }
+        guard targetViewAlignsWhenNotLarge else { return }
+        guard targetViewTag != nil else { return }
         guard isAtMax(currentHeight: selectedHeight, maxHeight: maxHeight) else { return }
         guard let scrollView = scrollState.scrollView else { return }
         let desiredOffsetY = scrollState.pendingCollapsedAnchorStartOffsetY
@@ -3408,6 +3528,7 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         withAnimation(options.animation.speed(dragDismissAnimationSpeed)) {
             dragTranslation = translation
             dismissSlideOffset = collapseAxisDirection * travel
+            dismissTargetAlignmentProgress = shouldAnimateDismissTowardTarget ? 1 : 0
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + dragDismissCompletionDelay) { @MainActor in
@@ -3419,6 +3540,7 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
                 isPresented = false
                 isDragDismissAnimating = false
                 dismissSlideOffset = 0
+                dismissTargetAlignmentProgress = 0
                 dragTranslation = 0
             }
 
@@ -3439,6 +3561,7 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         var transaction = Transaction(animation: options.animation)
         transaction.disablesAnimations = false
         withTransaction(transaction) {
+            dismissTargetAlignmentProgress = shouldAnimateDismissTowardTarget ? 1 : 0
             isPresented = false
         }
         onDismiss?()
@@ -3460,8 +3583,8 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         #if canImport(UIKit)
         let isEligible =
             options.expansionAxis == .vertical &&
-            options.keepsCollapsedScrollAnchorPinned &&
-            options.collapsedScrollAnchorTag != nil &&
+            targetViewAlignsWhenNotLarge &&
+            targetViewTag != nil &&
             isAtMax(currentHeight: selectedHeight, maxHeight: maxHeight)
 
         scrollState.enablesPreHandoffCollapseLock = isEligible
@@ -3642,6 +3765,22 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         }
 
         setScrollDisabled(!shouldEnableScroll)
+    }
+}
+
+private extension CGRect {
+    func paneExpanded(by padding: EdgeInsets) -> CGRect {
+        let top = max(0, padding.top)
+        let leading = max(0, padding.leading)
+        let bottom = max(0, padding.bottom)
+        let trailing = max(0, padding.trailing)
+
+        return CGRect(
+            x: minX - leading,
+            y: minY - top,
+            width: width + leading + trailing,
+            height: height + top + bottom
+        )
     }
 }
 

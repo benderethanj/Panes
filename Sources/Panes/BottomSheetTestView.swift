@@ -20,8 +20,20 @@ struct PaneDemoView: View {
     @State private var deferBottomSystemGestures = false
 
     private var presentationOptions: PaneConfig {
-        PaneConfig(
-            detents: [.anchorHeight(tag: AnyHashable("collapse-anchor"), offset: 132), .medium, .large],
+        let targetView = pinTaggedViewOnCollapse
+        ? PaneTargetView(
+            tag: AnyHashable("collapse-anchor"),
+            alignment: .top,
+            alignsWhenNotLarge: true,
+            tracksWhileNotLarge: trackTaggedViewWhileCollapsed
+        )
+        : nil
+        let detents: [PaneDetent] = targetView == nil
+            ? [.fraction(0.2), .medium, .large]
+            : [.targetViewHeight(padding: 132), .medium, .large]
+
+        return PaneConfig(
+            detents: detents,
             largestUndimmedDetent: .large,
             showsDragIndicator: showDragIndicator,
             allowsBackgroundInteraction: allowsBackgroundInteraction,
@@ -34,14 +46,18 @@ struct PaneDemoView: View {
             crossAxisSize: .fraction(widthFraction),
             anchor: anchorPreset.alignment,
             expansionAxis: expansionAxis,
-            collapsedScrollAnchorTag: pinTaggedViewOnCollapse ? AnyHashable("collapse-anchor") : nil,
-            collapsedScrollAnchor: .top,
-            keepsCollapsedScrollAnchorPinned: pinTaggedViewOnCollapse,
-            tracksCollapsedScrollAnchor: trackTaggedViewWhileCollapsed,
+            targetView: targetView,
             scrollSnapBehavior: snapScrollToViews ? .viewAligned : .none,
-            dragIndicatorTouchExtension: dragIndicatorTouchExtension,
+            handleInteractionZone: PaneHandleInteractionZone(
+                padding: EdgeInsets(
+                    top: dragIndicatorTouchExtension,
+                    leading: dragIndicatorTouchExtension,
+                    bottom: dragIndicatorTouchExtension,
+                    trailing: dragIndicatorTouchExtension
+                ),
+                systemGestureDeferralEdges: systemGestureDeferralEdges
+            ),
             allowsContentInteractionWhenNotFullyExpanded: allowsContentInteractionWhenCollapsed,
-            systemGestureDeferralEdges: systemGestureDeferralEdges,
         )
     }
 
@@ -135,11 +151,11 @@ struct PaneDemoView: View {
         ) { context in
             PaneScrollView(
                 state: context.scrollState,
-                collapsedScrollAnchorTag: context.options.collapsedScrollAnchorTag,
-                shouldPinCollapsedScrollAnchor: context.options.keepsCollapsedScrollAnchorPinned && !context.isSelectedDetentFullyExpanded,
-                tracksCollapsedScrollAnchor: context.options.tracksCollapsedScrollAnchor,
+                collapsedScrollAnchorTag: context.options.targetView?.tag,
+                shouldPinCollapsedScrollAnchor: (context.options.targetView?.alignsWhenNotLarge ?? false) && !context.isSelectedDetentFullyExpanded,
+                tracksCollapsedScrollAnchor: context.options.targetView?.tracksWhileNotLarge ?? false,
                 scrollSnapBehavior: context.options.scrollSnapBehavior,
-                collapsedScrollAnchor: context.options.collapsedScrollAnchor
+                collapsedScrollAnchor: context.options.targetView?.alignment ?? .top
             ) {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     Text("Native sheet-style behavior")
