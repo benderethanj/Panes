@@ -33,35 +33,45 @@ public struct GlassCard<Content: View>: View {
             }
             content
                 .padding(padding)
-                .glassEffect(glass, in: .rect(cornerRadius: cornerRadius))
+                .glassEffect(
+                    glass,
+                    in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                )
         } else {
-            content
+            let fallbackCard = content
                 .padding(padding)
                 .background(.ultraThinMaterial)
                 .background(tint)
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { drag in
-                            self.position = drag.location
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                self.pressed = true
+
+            if interactive {
+                fallbackCard
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { drag in
+                                self.position = drag.location
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    self.pressed = true
+                                }
                             }
-                        }
-                        .onEnded { drag in
-                            withAnimation {
-                                self.pressed = false
+                            .onEnded { drag in
+                                withAnimation {
+                                    self.pressed = false
+                                }
                             }
-                        }
-                )
-                .overlay(alignment: .topLeading) {
+                    )
+                    .overlay(alignment: .topLeading) {
                         Circle()
-                        .fill(.white.opacity(0.5))
+                            .fill(.white.opacity(0.5))
                             .frame(width: 100, height: 100)
                             .blur(radius: pressed ? 100 : 1000)
                             .offset(x: position.x - 50, y: position.y - 50)
-                }
-                .cornerRadius(cornerRadius)
-                .scaleEffect(pressed ? 1.01 : 1.0)
+                    }
+                    .cornerRadius(cornerRadius)
+                    .scaleEffect(pressed ? 1.01 : 1.0)
+            } else {
+                fallbackCard
+                    .cornerRadius(cornerRadius)
+            }
         }
     }
 }

@@ -12,6 +12,7 @@ public enum ImpactFeedbackStyle {
 #endif
 
 @inline(__always)
+@MainActor
 func impact(_ style: ImpactFeedbackStyle = .medium) {
     #if canImport(UIKit)
     UIImpactFeedbackGenerator(style: style).impactOccurred()
