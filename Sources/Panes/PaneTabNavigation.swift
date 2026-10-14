@@ -128,7 +128,7 @@ public struct PaneTabNavigationConfiguration {
         glassStyle: PaneGlassStyle = .regular,
         glassIsInteractive: Bool = true,
         tabBarCornerRadius: CGFloat? = nil,
-        selectionAnimation: Animation = .interactiveSpring(
+        selectionAnimation: Animation = .spring(
             response: 0.32,
             dampingFraction: 0.82,
             blendDuration: 0.1
@@ -396,8 +396,8 @@ public struct PaneTabNavigation<
     private let menuContent: (PaneTabMenuContext) -> MenuContent
 
     @Namespace private var menuPresentationNamespace
-    @State private var scrubAxisPosition: CGFloat?
-    @State private var scrubStartAxisPosition: CGFloat?
+    @State private var scrubOffset: CGFloat?
+    @State private var scrubStartIndex: Int?
     @State private var isScrubbing = false
     @State private var menuButtonFrame: CGRect = .null
     @State private var isMenuButtonPressing = false
@@ -679,6 +679,16 @@ public struct PaneTabNavigation<
             (isHorizontal(placement) ? size.width : size.height) - (margin * 2)
         )
         let barMajorLength = max(0, availableMajorLength - buttonDimension)
+        let scrubMargin = max(0, configuration.scrubMargin ?? idleMargin)
+        let scrubPadding = max(0, configuration.scrubBarPadding ?? configuration.barPadding)
+        let scrubButtonDimension = configuration.hidesMenuButtonWhileDragging
+            ? 0
+            : resolvedBarThickness(in: size, margin: scrubMargin)
+        let scrubMajorLength = max(
+            0,
+            (isHorizontal(placement) ? size.width : size.height)
+                - (scrubMargin * 2) - scrubButtonDimension - (scrubPadding * 2)
+        )
 
         return Group {
             if isHorizontal(placement) {
@@ -686,7 +696,7 @@ public struct PaneTabNavigation<
                     if showsTabBar {
                         ZStack {
                             if menuState == .closed {
-                                tabBar(placement: placement)
+                                tabBar(placement: placement, scrubMajorLength: scrubMajorLength)
                                     .transition(
                                         .move(edge: .bottom)
                                             .combined(with: .blurReplace)
@@ -705,7 +715,7 @@ public struct PaneTabNavigation<
                     if showsTabBar {
                         ZStack {
                             if menuState == .closed {
-                                tabBar(placement: placement)
+                                tabBar(placement: placement, scrubMajorLength: scrubMajorLength)
                                     .transition(
                                         .move(edge: .bottom)
                                             .combined(with: .blurReplace)
@@ -727,11 +737,14 @@ public struct PaneTabNavigation<
             maxHeight: .infinity,
             alignment: chromeAlignment(for: placement, showsTabBar: showsTabBar)
         )
-        .animation(reduceMotion ? nil : configuration.chromeAnimation, value: isScrubbing)
+        .animation(
+            reduceMotion ? nil : (isScrubbing ? .default : configuration.selectionAnimation),
+            value: isScrubbing
+        )
         .animation(reduceMotion ? nil : configuration.chromeAnimation, value: showsTabBar)
     }
 
-    private func tabBar(placement: PaneTabBarPlacement) -> some View {
+    private func tabBar(placement: PaneTabBarPlacement, scrubMajorLength: CGFloat) -> some View {
         GeometryReader { proxy in
             let horizontal = isHorizontal(placement)
             let idlePadding = max(0, configuration.barPadding)
@@ -804,7 +817,15 @@ public struct PaneTabNavigation<
                 .accessibilityHidden(true)
             }
             .contentShape(Capsule())
-            .gesture(scrubGesture(horizontal: horizontal, padding: padding, majorLength: majorLength))
+            .highPriorityGesture(
+                scrubGesture(
+                    horizontal: horizontal,
+                    padding: padding,
+                    majorLength: majorLength,
+                    scrubMajorLength: scrubMajorLength
+                ),
+                including: .all
+            )
         }
     }
 
@@ -1221,49 +1242,51 @@ public struct PaneTabNavigation<
     private func scrubGesture(
         horizontal: Bool,
         padding: CGFloat,
-        majorLength: CGFloat
+        majorLength: CGFloat,
+        scrubMajorLength: CGFloat
     ) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
-                guard !tabs.isEmpty, majorLength > 0 else { return }
-                let rawPosition = (horizontal ? value.location.x : value.location.y) - padding
-                let clampedPosition = rawPosition.clamped(to: 0...majorLength)
-                if scrubStartAxisPosition == nil {
-                    scrubStartAxisPosition = clampedPosition
-                }
-                if let scrubStartAxisPosition,
-                   abs(clampedPosition - scrubStartAxisPosition) >= 4 {
-                    isScrubbing = true
-                    scrubAxisPosition = clampedPosition
-                } else if isScrubbing {
-                    scrubAxisPosition = clampedPosition
+                guard let current = tabs.firstIndex(of: selection),
+                      majorLength > 0, scrubMajorLength > 0 else { return }
+                let axisStart = (horizontal ? value.startLocation.x : value.startLocation.y) - padding
+                let initialIndex = isScrubbing
+                    ? (scrubStartIndex ?? current)
+                    : nearestTabIndex(to: axisStart, majorLength: majorLength)
+
+                performAnimated(.default) {
+                    if !isScrubbing {
+                        scrubStartIndex = initialIndex
+                        isScrubbing = true
+                    }
+
+                    // Match the original switcher: anchor to the starting tab's
+                    // center in the expanded bar, then apply translation, not location.
+                    let cellLength = scrubMajorLength / CGFloat(tabs.count)
+                    let base = cellLength * (CGFloat(current) + 0.5)
+                    let start = cellLength * (CGFloat(scrubStartIndex ?? initialIndex) + 0.5)
+                    let delta = (horizontal ? value.translation.width : value.translation.height) - 8
+                    let minEdge = cellLength / 2
+                    let maxEdge = scrubMajorLength - cellLength / 2
+                    scrubOffset = (start - base + delta).clamped(to: (minEdge - base)...(maxEdge - base))
                 }
             }
-            .onEnded { value in
-                guard !tabs.isEmpty, majorLength > 0 else {
-                    scrubAxisPosition = nil
-                    scrubStartAxisPosition = nil
-                    isScrubbing = false
+            .onEnded { _ in
+                guard !tabs.isEmpty, scrubMajorLength > 0,
+                      let position = scrubAxisPosition(majorLength: scrubMajorLength) else {
+                    resetChromeInteraction()
                     return
                 }
 
-                let position = (horizontal ? value.location.x : value.location.y) - padding
-                let predicted = (horizontal ? value.predictedEndLocation.x : value.predictedEndLocation.y) - padding
-                let projected = position + ((predicted - position) * 0.35)
-                let index = nearestTabIndex(
-                    to: projected.clamped(to: 0...majorLength),
-                    majorLength: majorLength
-                )
+                let index = nearestTabIndex(to: position, majorLength: scrubMajorLength)
                 let tab = tabs[index]
 
-                if selection != tab {
-                    performNavigationHaptic(.light, enabled: configuration.hapticsEnabled)
-                }
-
                 performAnimated(configuration.selectionAnimation) {
+                    // Commit before clearing the offset so the indicator settles
+                    // directly onto the nearest tab without returning to the old one.
                     selection = tab
-                    scrubAxisPosition = nil
-                    scrubStartAxisPosition = nil
+                    scrubOffset = nil
+                    scrubStartIndex = nil
                     isScrubbing = false
                 }
             }
@@ -1381,7 +1404,7 @@ public struct PaneTabNavigation<
         cellLength: CGFloat
     ) -> Int {
         guard !tabs.isEmpty else { return 0 }
-        if let scrubAxisPosition {
+        if let scrubAxisPosition = scrubAxisPosition(majorLength: majorLength) {
             return nearestTabIndex(to: scrubAxisPosition, majorLength: majorLength)
         }
         return tabs.firstIndex(of: selection) ?? 0
@@ -1397,7 +1420,7 @@ public struct PaneTabNavigation<
     ) -> CGPoint {
         let selectedCenter = padding + (cellLength * (CGFloat(highlightedIndex) + 0.5))
         let halfCell = cellLength / 2
-        let scrubCenter = scrubAxisPosition.map {
+        let scrubCenter = scrubAxisPosition(majorLength: majorLength).map {
             padding + $0.clamped(to: halfCell...max(halfCell, majorLength - halfCell))
         }
         let majorCenter = scrubCenter ?? selectedCenter
@@ -1407,11 +1430,19 @@ public struct PaneTabNavigation<
             : CGPoint(x: crossCenter, y: majorCenter)
     }
 
+    private func scrubAxisPosition(majorLength: CGFloat) -> CGFloat? {
+        guard let scrubOffset, let selectedIndex = tabs.firstIndex(of: selection) else { return nil }
+        let cellLength = majorLength / CGFloat(tabs.count)
+        return cellLength * (CGFloat(selectedIndex) + 0.5) + scrubOffset
+    }
+
     private func nearestTabIndex(to position: CGFloat, majorLength: CGFloat) -> Int {
         guard tabs.count > 1, majorLength > 0 else { return 0 }
         let cellLength = majorLength / CGFloat(tabs.count)
-        let index = Int((position / cellLength).rounded(.down))
-        return min(max(index, 0), tabs.count - 1)
+        return tabs.indices.min {
+            abs(position - cellLength * (CGFloat($0) + 0.5))
+                < abs(position - cellLength * (CGFloat($1) + 0.5))
+        } ?? 0
     }
 
     private func settleSelection(on tab: Tab) {
@@ -1420,8 +1451,8 @@ public struct PaneTabNavigation<
         }
         performAnimated(configuration.selectionAnimation) {
             selection = tab
-            scrubAxisPosition = nil
-            scrubStartAxisPosition = nil
+            scrubOffset = nil
+            scrubStartIndex = nil
             isScrubbing = false
         }
     }
@@ -1443,12 +1474,12 @@ public struct PaneTabNavigation<
     }
 
     private func resetChromeInteraction() {
-        guard scrubAxisPosition != nil || scrubStartAxisPosition != nil || isScrubbing else { return }
+        guard scrubOffset != nil || scrubStartIndex != nil || isScrubbing else { return }
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            scrubAxisPosition = nil
-            scrubStartAxisPosition = nil
+            scrubOffset = nil
+            scrubStartIndex = nil
             isScrubbing = false
         }
     }
