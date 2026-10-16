@@ -614,14 +614,16 @@ public struct PaneTabNavigation<
             }
         }
             .overlay {
-                if showsChrome {
-                    chrome(
-                        in: size,
-                        placement: placement
-                    )
-                    .allowsHitTesting(menuState == .closed)
-                    .accessibilityHidden(menuState != .closed)
-                }
+                // Keep one chrome view through interrupted visibility animations.
+                // Rapid navigation should retarget its opacity, not race an outgoing
+                // removal against a new insertion of the glass tab bar.
+                chrome(
+                    in: size,
+                    placement: placement
+                )
+                .opacity(showsChrome ? 1 : 0)
+                .allowsHitTesting(showsChrome && menuState == .closed)
+                .accessibilityHidden(!showsChrome || menuState != .closed)
             }
     }
 
@@ -648,6 +650,9 @@ public struct PaneTabNavigation<
                     )
                 )
             }
+            // Mount once a real anchor exists; keep this identity stable through
+            // opening, closing, and temporary source suppression while scrubbing.
+            .id(menuButtonFrame.width > 0.5 && menuButtonFrame.height > 0.5)
     }
 
     @ViewBuilder
@@ -817,15 +822,21 @@ public struct PaneTabNavigation<
                 .accessibilityHidden(true)
             }
             .contentShape(Capsule())
-            .highPriorityGesture(
-                scrubGesture(
-                    horizontal: horizontal,
-                    padding: padding,
-                    majorLength: majorLength,
-                    scrubMajorLength: scrubMajorLength
-                ),
-                including: .all
-            )
+            .overlay {
+                // Receive touch-down directly instead of waiting for the glass
+                // and nested buttons to yield their press gestures to dragging.
+                Color.clear
+                    .contentShape(Capsule())
+                    .gesture(
+                        scrubGesture(
+                            horizontal: horizontal,
+                            padding: padding,
+                            majorLength: majorLength,
+                            scrubMajorLength: scrubMajorLength
+                        )
+                    )
+                    .accessibilityHidden(true)
+            }
         }
     }
 
