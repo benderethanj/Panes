@@ -3771,7 +3771,8 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
         case .horizontal:
             rawOrigin = origin(for: verticalAnchorSide(for: options.anchor), anchor: anchor, size: length)
         }
-        let originRange = crossAxisBounds.lowerBound...(crossAxisBounds.upperBound - length)
+        let maximumOrigin = max(crossAxisBounds.lowerBound, crossAxisBounds.upperBound - length)
+        let originRange = crossAxisBounds.lowerBound...maximumOrigin
 
         return ResolvedPaneCrossAxisFrame(
             origin: rawOrigin.clamped(to: originRange),
