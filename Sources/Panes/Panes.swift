@@ -3837,8 +3837,10 @@ public struct PaneModifier<SheetContent: View>: ViewModifier {
             originY = crossAxisFrame.origin
         }
 
-        let clampedX = originX.clamped(to: layoutBounds.minX...(layoutBounds.maxX - paneWidth))
-        let clampedY = originY.clamped(to: layoutBounds.minY...(layoutBounds.maxY - paneHeight))
+        let maximumOriginX = max(layoutBounds.minX, layoutBounds.maxX - paneWidth)
+        let maximumOriginY = max(layoutBounds.minY, layoutBounds.maxY - paneHeight)
+        let clampedX = originX.clamped(to: layoutBounds.minX...maximumOriginX)
+        let clampedY = originY.clamped(to: layoutBounds.minY...maximumOriginY)
 
         return CGRect(x: clampedX, y: clampedY, width: paneWidth, height: paneHeight)
     }
