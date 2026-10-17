@@ -387,6 +387,7 @@ public struct PaneTabNavigation<
     private let configuration: PaneTabNavigationConfiguration
     private let menuConfiguration: PaneTabMenuConfiguration
     private let tabAccessibilityLabel: (Tab) -> String
+    private let onSelectionSettled: ((Tab) -> Void)?
     private let tabContent: (Tab) -> TabContent
     private let tabLabel: (PaneTabLabelContext<Tab>) -> TabLabel
     private let indicator: (PaneTabIndicatorContext<Tab>) -> Indicator
@@ -428,6 +429,7 @@ public struct PaneTabNavigation<
         configuration: PaneTabNavigationConfiguration = .init(),
         menuConfiguration: PaneTabMenuConfiguration = .init(),
         tabAccessibilityLabel: @escaping (Tab) -> String = { String(describing: $0) },
+        onSelectionSettled: ((Tab) -> Void)? = nil,
         @ViewBuilder content: @escaping (Tab) -> TabContent,
         @ViewBuilder tabLabel: @escaping (PaneTabLabelContext<Tab>) -> TabLabel,
         @ViewBuilder indicator: @escaping (PaneTabIndicatorContext<Tab>) -> Indicator,
@@ -445,6 +447,7 @@ public struct PaneTabNavigation<
         self.configuration = configuration
         self.menuConfiguration = menuConfiguration
         self.tabAccessibilityLabel = tabAccessibilityLabel
+        self.onSelectionSettled = onSelectionSettled
         self.tabContent = content
         self.tabLabel = tabLabel
         self.indicator = indicator
@@ -462,6 +465,7 @@ public struct PaneTabNavigation<
         configuration: PaneTabNavigationConfiguration = .init(),
         menuConfiguration: PaneTabMenuConfiguration = .init(),
         tabAccessibilityLabel: @escaping (Tab) -> String = { String(describing: $0) },
+        onSelectionSettled: ((Tab) -> Void)? = nil,
         @ViewBuilder content: @escaping (Tab) -> TabContent,
         @ViewBuilder tabLabel: @escaping (PaneTabLabelContext<Tab>) -> TabLabel,
         @ViewBuilder indicator: @escaping (PaneTabIndicatorContext<Tab>) -> Indicator,
@@ -476,6 +480,7 @@ public struct PaneTabNavigation<
             configuration: configuration,
             menuConfiguration: menuConfiguration,
             tabAccessibilityLabel: tabAccessibilityLabel,
+            onSelectionSettled: onSelectionSettled,
             content: content,
             tabLabel: tabLabel,
             indicator: indicator,
@@ -657,6 +662,14 @@ public struct PaneTabNavigation<
 
     @ViewBuilder
     private var pages: some View {
+        #if os(iOS)
+        PaneTabPager(
+            selection: $selection,
+            tabs: tabs,
+            content: tabContent,
+            onSelectionSettled: onSelectionSettled
+        )
+        #else
         TabView(selection: $selection) {
             ForEach(tabs, id: \.self) { tab in
                 tabContent(tab)
@@ -665,6 +678,7 @@ public struct PaneTabNavigation<
         }
         #if os(iOS) || os(tvOS) || os(visionOS)
         .tabViewStyle(.page(indexDisplayMode: .never))
+        #endif
         #endif
     }
 
