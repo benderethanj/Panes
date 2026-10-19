@@ -724,6 +724,8 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
         private var contentSizeObserver: NSKeyValueObservation?
         private var boundsObserver: NSKeyValueObservation?
         private var contentInsetObserver: NSKeyValueObservation?
+        private var geometryMetricPublicationScheduled = false
+        private var geometryMetricPublicationGeneration = 0
 
         nonisolated private func publishMetricsOnMainIfPossible() {
             if Thread.isMainThread {
@@ -827,7 +829,30 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
             }
 
             guard !state.suppressesGeometryMetricPublishing else { return }
+            scheduleGeometryMetricPublication()
+        }
 
+        private func scheduleGeometryMetricPublication() {
+            guard !geometryMetricPublicationScheduled else { return }
+            geometryMetricPublicationScheduled = true
+            let generation = geometryMetricPublicationGeneration
+
+            // UIKit also changes scroll metrics during SwiftUI layout. Keep the
+            // offset lock above synchronous, but publish observed geometry only
+            // after the current view update, once for the latest attached state.
+            DispatchQueue.main.async { @MainActor [weak self] in
+                guard let self,
+                      generation == self.geometryMetricPublicationGeneration else { return }
+                self.geometryMetricPublicationScheduled = false
+                self.publishGeometryMetrics()
+            }
+        }
+
+        private func publishGeometryMetrics() {
+            guard let scrollView, let state,
+                  !state.suppressesGeometryMetricPublishing else { return }
+
+            let inset = scrollView.adjustedContentInset
             let offset = max(0, scrollView.contentOffset.y + inset.top)
             let contentLength = max(0, scrollView.contentSize.height + inset.top + inset.bottom)
             let viewportLength = max(0, scrollView.bounds.height)
@@ -852,6 +877,8 @@ private struct PaneUIKitScrollMetricsBridge: UIViewRepresentable {
         }
 
         private func invalidateObservers() {
+            geometryMetricPublicationGeneration += 1
+            geometryMetricPublicationScheduled = false
             panGestureRecognizer?.removeTarget(self, action: #selector(handleScrollPan(_:)))
             restoreOriginalScrollConfiguration()
             restoreOriginalTouchCancellationConfiguration()
