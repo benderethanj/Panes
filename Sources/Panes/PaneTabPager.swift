@@ -39,7 +39,7 @@ struct PaneTabPager<Tab: Hashable, Content: View>: UIViewControllerRepresentable
     static func dismantleUIViewController(_ controller: UIPageViewController, coordinator: Coordinator) {
         controller.delegate = nil
         controller.dataSource = nil
-        coordinator.isAttached = false
+        coordinator.detach(from: controller)
     }
 
     @MainActor
@@ -47,6 +47,8 @@ struct PaneTabPager<Tab: Hashable, Content: View>: UIViewControllerRepresentable
         private var parent: PaneTabPager
         private var hosts: [Tab: UIHostingController<PaneTabPagerPage<Content>>] = [:]
         private var isTransitioning = false
+        private var activeTransitionID: UUID?
+        private var needsNormalization = false
         private var swipeStartSelection: Tab?
         private var lastSettledSelection: Tab?
         private var selectionUpdateScheduled = false
@@ -62,7 +64,11 @@ struct PaneTabPager<Tab: Hashable, Content: View>: UIViewControllerRepresentable
             for (tab, host) in hosts {
                 host.rootView = page(for: tab)
             }
-            guard !selectionUpdateScheduled else { return }
+            scheduleSelectionUpdate(in: controller)
+        }
+
+        private func scheduleSelectionUpdate(in controller: UIPageViewController) {
+            guard isAttached, !selectionUpdateScheduled else { return }
             selectionUpdateScheduled = true
             // Start UIKit's animation after SwiftUI's update transaction has ended.
             DispatchQueue.main.async { [weak self, weak controller] in
@@ -70,6 +76,16 @@ struct PaneTabPager<Tab: Hashable, Content: View>: UIViewControllerRepresentable
                 self.selectionUpdateScheduled = false
                 self.showRequestedPage(in: controller)
             }
+        }
+
+        fileprivate func detach(from controller: UIPageViewController) {
+            isAttached = false
+            activeTransitionID = nil
+            isTransitioning = false
+            needsNormalization = false
+            swipeStartSelection = nil
+            selectionUpdateScheduled = false
+            controller.view.isUserInteractionEnabled = true
         }
 
         private func page(for tab: Tab) -> PaneTabPagerPage<Content> {
@@ -92,11 +108,15 @@ struct PaneTabPager<Tab: Hashable, Content: View>: UIViewControllerRepresentable
         private func showRequestedPage(in controller: UIPageViewController) {
             // During either a swipe or an animated tab selection, retain the latest
             // requested selection and apply it when UIKit finishes the current slide.
-            guard isAttached, !isTransitioning,
-                  let target = parent.tabs.first(where: { $0 == parent.selection }) ?? parent.tabs.first else { return }
+            guard isAttached, !isTransitioning else { return }
+            guard let target = parent.tabs.first(where: { $0 == parent.selection }) ?? parent.tabs.first else {
+                controller.view.isUserInteractionEnabled = true
+                return
+            }
             let visible = controller.viewControllers?.first
             let current = tab(for: visible)
-            guard current != target else {
+            guard current != target || needsNormalization else {
+                controller.view.isUserInteractionEnabled = true
                 reportSettled(target)
                 return
             }
@@ -105,23 +125,47 @@ struct PaneTabPager<Tab: Hashable, Content: View>: UIViewControllerRepresentable
             let newIndex = parent.tabs.firstIndex(of: target) ?? 0
             let advances = newIndex > (oldIndex ?? newIndex)
             let movesForward = parent.layoutDirection == .rightToLeft ? !advances : advances
-            let animated = visible != nil && controller.view.window != nil && !parent.reduceMotion
+            let animated = !needsNormalization && visible != nil && controller.view.window != nil && !parent.reduceMotion
+            let transitionID = UUID()
+            activeTransitionID = transitionID
             isTransitioning = true
+            needsNormalization = false
             lastSettledSelection = nil
             controller.view.isUserInteractionEnabled = false
-            controller.setViewControllers(
-                [host(for: target)],
-                direction: movesForward ? .forward : .reverse,
-                animated: animated
-            ) { [weak self, weak controller] _ in
-                guard let self, let controller, self.isAttached else { return }
-                self.isTransitioning = false
-                controller.view.isUserInteractionEnabled = true
-                if let visibleTab = self.tab(for: controller.viewControllers?.first) {
-                    self.reportSettled(visibleTab)
-                }
-                self.showRequestedPage(in: controller)
+            let destination = host(for: target)
+            let direction: UIPageViewController.NavigationDirection = movesForward ? .forward : .reverse
+            guard animated else {
+                // A nonanimated presentation is installed when the call returns;
+                // UIKit need not invoke a completion to unlock the page.
+                controller.setViewControllers([destination], direction: direction, animated: false)
+                finishPresentation(transitionID, finished: true, in: controller)
+                return
             }
+            controller.setViewControllers(
+                [destination],
+                direction: direction,
+                animated: true
+            ) { [weak self, weak controller] finished in
+                // UIKit must unwind its completion before another presentation.
+                DispatchQueue.main.async { [weak self, weak controller] in
+                    guard let self, let controller else { return }
+                    self.finishPresentation(transitionID, finished: finished, in: controller)
+                }
+            }
+        }
+
+        private func finishPresentation(_ transitionID: UUID, finished: Bool, in controller: UIPageViewController) {
+            guard isAttached, activeTransitionID == transitionID else { return }
+            activeTransitionID = nil
+            isTransitioning = false
+            needsNormalization = !finished
+            controller.view.isUserInteractionEnabled = finished
+            if finished, let visibleTab = tab(for: controller.viewControllers?.first) {
+                reportSettled(visibleTab)
+            }
+            // An interrupted slide can report its target without installing it.
+            // Reinstall the latest requested cached host without an animation.
+            scheduleSelectionUpdate(in: controller)
         }
 
         private func reportSettled(_ tab: Tab) {
@@ -154,6 +198,7 @@ struct PaneTabPager<Tab: Hashable, Content: View>: UIViewControllerRepresentable
 
         func pageViewController(_ pageViewController: UIPageViewController,
                                 willTransitionTo pendingViewControllers: [UIViewController]) {
+            guard isAttached, !isTransitioning else { return }
             isTransitioning = true
             lastSettledSelection = nil
             swipeStartSelection = parent.selection
@@ -161,14 +206,16 @@ struct PaneTabPager<Tab: Hashable, Content: View>: UIViewControllerRepresentable
 
         func pageViewController(_ pageViewController: UIPageViewController, didFinishAnimating finished: Bool,
                                 previousViewControllers: [UIViewController], transitionCompleted completed: Bool) {
+            guard isAttached, activeTransitionID == nil, let swipeStartSelection else { return }
             isTransitioning = false
             if completed, parent.selection == swipeStartSelection,
                let visibleTab = tab(for: pageViewController.viewControllers?.first) {
                 // A button pressed during the swipe takes precedence over its result.
                 parent.selection = visibleTab
             }
-            swipeStartSelection = nil
-            showRequestedPage(in: pageViewController)
+            self.swipeStartSelection = nil
+            needsNormalization = !finished
+            scheduleSelectionUpdate(in: pageViewController)
         }
     }
 }
