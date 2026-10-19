@@ -1419,6 +1419,7 @@ public struct PaneScrollView<Content: View>: View {
                         .padding(.bottom, paneScrollChrome.indicatorInsets.bottom)
                         .padding(.trailing, paneScrollChrome.indicatorInsets.trailing)
 
+                    #if !canImport(UIKit)
                     GeometryReader { proxy in
                         Color.clear
                             .frame(height: 0)
@@ -1428,6 +1429,7 @@ public struct PaneScrollView<Content: View>: View {
                             )
                     }
                     .frame(height: 0)
+                    #endif
                 }
                 .coordinateSpace(name: contentSpaceID)
                 .background {
@@ -1506,11 +1508,11 @@ public struct PaneScrollView<Content: View>: View {
                 updateScrollOffset(topMarkerGlobalY: nil, viewportGlobalMinY: viewportGlobalMinY)
                 #endif
             }
+            #if !canImport(UIKit)
             .onPreferenceChange(PaneScrollBottomMarkerMaxYKey.self) { bottomMarkerGlobalMaxY in
-                #if !canImport(UIKit)
                 updateBottomEdgeDistance(bottomMarkerGlobalMaxY: bottomMarkerGlobalMaxY, viewportGlobalMaxY: nil)
-                #endif
             }
+            #endif
             .onPreferenceChange(PaneScrollViewportMaxYKey.self) { viewportGlobalMaxY in
                 #if canImport(UIKit)
                 updateViewportMetrics(maxY: viewportGlobalMaxY)
