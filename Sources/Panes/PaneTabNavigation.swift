@@ -105,6 +105,8 @@ public struct PaneTabNavigationConfiguration {
     public var tabBarCornerRadius: CGFloat?
     public var selectionAnimation: Animation
     public var chromeAnimation: Animation
+    /// Move hidden chrome beyond its placement edge. Reduce Motion retains the fade.
+    public var slidesChromeOutWhenHidden: Bool
     public var hidesTabBarWhenSingleTab: Bool
     public var hidesMenuButtonWhileDragging: Bool
     public var menuButtonAccessibilityLabel: String
@@ -138,6 +140,7 @@ public struct PaneTabNavigationConfiguration {
             dampingFraction: 0.88,
             blendDuration: 0.1
         ),
+        slidesChromeOutWhenHidden: Bool = false,
         hidesTabBarWhenSingleTab: Bool = false,
         hidesMenuButtonWhileDragging: Bool = true,
         menuButtonAccessibilityLabel: String = "Open menu",
@@ -162,6 +165,7 @@ public struct PaneTabNavigationConfiguration {
         self.tabBarCornerRadius = tabBarCornerRadius
         self.selectionAnimation = selectionAnimation
         self.chromeAnimation = chromeAnimation
+        self.slidesChromeOutWhenHidden = slidesChromeOutWhenHidden
         self.hidesTabBarWhenSingleTab = hidesTabBarWhenSingleTab
         self.hidesMenuButtonWhileDragging = hidesMenuButtonWhileDragging
         self.menuButtonAccessibilityLabel = menuButtonAccessibilityLabel
@@ -620,16 +624,31 @@ public struct PaneTabNavigation<
         }
             .overlay {
                 // Keep one chrome view through interrupted visibility animations.
-                // Rapid navigation should retarget its opacity, not race an outgoing
+                // Rapid navigation should retarget its visibility, not race an outgoing
                 // removal against a new insertion of the glass tab bar.
                 chrome(
                     in: size,
                     placement: placement
                 )
+                .offset(hiddenChromeOffset(in: size, placement: placement))
                 .opacity(showsChrome ? 1 : 0)
                 .allowsHitTesting(showsChrome && menuState == .closed)
                 .accessibilityHidden(!showsChrome || menuState != .closed)
             }
+    }
+
+    private func hiddenChromeOffset(in size: CGSize, placement: PaneTabBarPlacement) -> CGSize {
+        guard !showsChrome, configuration.slidesChromeOutWhenHidden, !reduceMotion else { return .zero }
+        let margin = max(0, configuration.margin)
+        let distance = margin + resolvedBarThickness(in: size, margin: margin) + 24
+        switch placement {
+        case .leading:
+            return CGSize(width: layoutDirection == .rightToLeft ? distance : -distance, height: 0)
+        case .trailing:
+            return CGSize(width: layoutDirection == .rightToLeft ? -distance : distance, height: 0)
+        case .bottom, .automatic:
+            return CGSize(width: 0, height: distance)
+        }
     }
 
     private func paneSurfaceLayer(

@@ -52,6 +52,8 @@ with material rather than Liquid Glass.
 `PaneTabNavigationConfiguration` separately controls the tab surface content inset,
 idle/scrubbing margins and padding, menu-button spacing, glass interactivity, and
 whether a single available tab hides the tab surface while retaining the menu button.
+Set `slidesChromeOutWhenHidden` to move the chrome beyond its placement edge when
+`showsChrome` becomes false; it defaults to false and uses a fade with Reduce Motion.
 Its optional `PaneTabQuickAction` items expand the same menu-button glass into a
 vertical shortcut capsule. Mark one action with `activatesOnQuickSwipe: true` to
 make a fast upward flick perform that shortcut; held and slower drags continue to
